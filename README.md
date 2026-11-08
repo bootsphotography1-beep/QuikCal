@@ -1,33 +1,37 @@
-# QuikCal
+# QuikCal source
 
-QuikCal is a macOS menu bar calendar app with voice capture: speak a request,
-review the suggested event, and save it. Includes a live transcript bar,
-on-device speech models, and Google Calendar support.
+QuikCal is a native macOS menu-bar calendar capture app. It turns typed or spoken notes into editable event drafts. Nothing is written to a calendar until the user explicitly confirms **Add**.
 
-- **Download:** [QuikCal 0.3.19 (DMG)](https://github.com/bootsphotography1-beep/QuikCal/releases/latest) — Apple Silicon, macOS 14 or later
-- **All releases:** https://github.com/bootsphotography1-beep/QuikCal/releases
+## Generation and speech
 
-## Updates
+- Event extraction uses Apple Foundation Models when the operating system and device support it and Apple Intelligence is ready. This requires macOS 26 or later. Otherwise, QuikCal uses its deterministic built-in parser.
+- Speech recognition uses the Parakeet speech model through the bundled-source `transcribe.cpp` helper. The app offers an explicit speech-model download or selection; model weights are not included here or in the app build.
+- QuikCal does not expose a downloadable local text-model route. The upstream speech-engine source is generic and supports additional ASR architectures, but QuikCal configures its speech workflow for Parakeet.
 
-QuikCal checks for updates automatically about once a day and shows Sparkle's
-update alert — nothing is ever downloaded, installed, or relaunched without
-your explicit action. Automatic checks are on by default and can be turned
-off in Settings → General; "Check for Updates…" works at any time.
+## Requirements
 
-Updates are delivered via the EdDSA-signed Sparkle feed:
+- macOS 14 or later; Apple Foundation Models require macOS 26 or later and a compatible, ready Apple Intelligence configuration.
+- Swift 6 toolchain and Xcode Command Line Tools.
+- CMake and a C/C++ toolchain to build the speech helper.
+- The first SwiftPM build may need network access to resolve the pinned Sparkle 2.10.1 dependency. No dependency was downloaded as part of preparing this source snapshot.
 
-https://github.com/bootsphotography1-beep/QuikCal/releases/latest/download/appcast.xml
+## Build and test
 
-**On 0.3.18:** use "Check for Updates…" from the menu to get 0.3.19 — no
-manual download needed.
+```sh
+swift test
+./scripts/build_speech_helper.sh
+./scripts/build_app.sh
+./scripts/build_dmg.sh
+```
 
-**On 0.3.17 or earlier:** the in-app updater arrived in 0.3.18, so those
-versions can't see this feed yet. Download the DMG from the releases page
-once to bootstrap; future updates will then arrive in-app.
+The default test target omits four historical model-evaluation suites whose unpublished research inputs are intentionally not part of this source publication. The packaged speech acceptance test is explicitly gated and requires a built app plus a user-provided Parakeet model.
 
-## Package notes
+`build_app.sh` needs the Sparkle package artifact and, by default, exactly one existing Apple Development signing identity. `QUIKCAL_SIGN_MODE=adhoc` is a local-development-only override. `build_dmg.sh` rejects ad-hoc output unless a separate local-development override is set; neither mode makes a build notarized or Developer ID-signed.
 
-- Apple Silicon (arm64), macOS 14.0 or later.
-- Signed with an Apple Development certificate; **not notarized** — macOS may
-  ask you to approve the app the first time you open it (System Settings →
-  Privacy & Security → Open Anyway).
+Build scripts create or replace generated outputs in `build/` and `dist/`. `build_app.sh` replaces `build/QuikCal.app`; `build_dmg.sh` replaces its staging directory and same-version DMG under `dist/`, and uses a temporary diagnostic file under `/tmp` while checking the DMG. Review those targets before running the scripts.
+
+## Configuration and licensing
+
+The public Google Desktop OAuth client ID and Sparkle public update configuration are in `Resources/Info.plist`; no client secret is embedded. Google credentials, when configured by a user, must remain local.
+
+There is no project-level `LICENSE` in this snapshot. Third-party notices and license texts are retained under `Resources/Notices/`; Sparkle remains a separately resolved SwiftPM dependency with its own license terms. No project license has been invented.

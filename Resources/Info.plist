@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>QuikCal</string>
+	<key>CFBundleExecutable</key>
+	<string>QuietCalendar</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.quietcalendar.app</string>
+	<key>CFBundleName</key>
+	<string>QuikCal</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.3.22</string>
+	<key>CFBundleVersion</key>
+	<string>22</string>
+	<key>GoogleDesktopOAuthClientID</key>
+	<string>823797884893-50chb8tghes6ts2t3jcpet3e8tcb2iku.apps.googleusercontent.com</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>QuikCal uses system events only for optional hold-to-talk when you enable it.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>QuikCal needs calendar access so you can pick a writable calendar and add events you explicitly confirm.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>QuikCal adds events you explicitly confirm into a calendar you choose.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>QuikCal uses the microphone to convert your spoken event into text for review before saving.</string>
+	<!-- Sparkle (0.3.19, owner-approved 2026-11-08): automatic periodic
+	     update CHECKS are enabled by default WITHOUT Sparkle's second-launch
+	     consent prompt (setting this key suppresses that prompt per official
+	     docs). Checks NOTIFY via the native Sparkle update alert; downloads,
+	     installs, and relaunches happen only on explicit user action. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<!-- Never silent: structurally disallow automatic download/install
+	     (hides Sparkle's "Automatically download and install updates in the
+	     future" opt-in checkbox) — every update requires an explicit
+	     Install action from the user. -->
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/bootsphotography1-beep/QuikCal/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>B43pPvZ/eZ7dv6Y7XpNVkf/SUniFgiJ5v84I15UocZ4=</string>
+</dict>
+</plist>

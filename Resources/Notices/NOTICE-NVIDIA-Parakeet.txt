@@ -1,0 +1,16 @@
+NVIDIA Open Model License — Parakeet speech weights
+
+Quiet Calendar does not redistribute Parakeet GGUF weights inside the application
+disk image until an independent NVIDIA Open Model License review is complete.
+
+Weights used for local speech-to-text are obtained by the user (download or an
+explicit “Use existing model” copy into Quiet Calendar Application Support) and
+remain subject to the NVIDIA Open Model License Agreement applicable to
+NVIDIA Parakeet / Parakeet Unified models.
+
+Upstream model family: NVIDIA Parakeet (e.g. nvidia/parakeet-unified-en-0.6b)
+Packaged GGUF host referenced by Quiet Calendar docs:
+  https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf
+
+Do not confuse this notice with the MIT license covering the bundled
+transcribe.cpp / ggml runtime binaries.

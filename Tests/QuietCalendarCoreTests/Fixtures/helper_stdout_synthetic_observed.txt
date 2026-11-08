@@ -1,0 +1,12 @@
+audio: local-models/stt-fixtures/SYNTHETIC_NOT_MIC_meeting_noon_sturm_16k_mono.wav
+  samples:    42979
+  duration:   2.686 s
+  sample rate 16000 Hz mono float32
+model: /Users/example/Library/Application Support/QuietCalendar/models/parakeet-unified-en-0.6b-Q8_0.gguf -> ok
+  backend:    MTL0
+  name:       Parakeet Unified EN 0.6B
+  license:    other
+  max audio:  unbounded (whole clip in one pass)
+run: ok
+text: Meeting at noon for something in Sturm 320.
+  realtime:   33x (82.2 ms for 2.7 s)
