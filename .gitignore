@@ -1,20 +1,42 @@
+# macOS
 .DS_Store
+
+# Swift Package Manager / build output
 /.build/
 /.swiftpm/
 /build/
 /dist/
+
+# Locally built speech helper (never published)
+/Resources/SpeechRuntime/QuietCalendarTranscribe
+/Resources/SpeechRuntime/QuietCalendarTranscribe.sha256
+
+# Vendored upstream speech-engine source: keep the pinned tree, ignore its build output
 /vendor/local-models/transcribe.cpp/build/
+
+# Research, model-evaluation and design artifacts (not part of the published source)
 /model-research/
 /research/
+/design/
+/design-references/
+
+# Local models: only the synthetic packaged-speech acceptance fixture is published
 /local-models/*
 !/local-models/stt-fixtures/
 /local-models/stt-fixtures/*
 !/local-models/stt-fixtures/SYNTHETIC_NOT_MIC_meeting_noon_sturm_16k_mono.wav
 
+# Working notes at the repository root: only README.md is published
+/*.md
+!/README.md
+
+# Model weights, logs and build artefacts
 *.gguf
 *.log
 *.xcresult/
 *.dSYM/
+
+# Credentials, environment files and signing material — never publish these
 .env*
 *.env
 *.pem
@@ -24,3 +46,5 @@
 *.key
 *.mobileprovision
 *.provisionprofile
+client_secret*.json
+*-client-secret*.json
