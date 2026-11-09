@@ -373,7 +373,7 @@ struct SettingsView: View {
                     Button("Replay…") { onReplayOnboarding() }
                         .controlSize(.small)
                 }
-                Text("Resets onboarding completion and the resume cursor only. Calendar, glass, shortcut, and Google links stay.")
+                Text("Replays the onboarding steps. Your calendar, glass, shortcut, and Google links stay.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -385,7 +385,7 @@ struct SettingsView: View {
                     Button("Show menu bar hint") { onShowMenuBarHint() }
                         .controlSize(.small)
                 }
-                Text("Shows the same hint as after onboarding. Dismissing it never resets setup.")
+                Text("Shows the same hint as after onboarding — dismissing it never resets setup.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -406,7 +406,7 @@ struct SettingsView: View {
                         .labelsHidden()
                         .controlSize(.small)
                 }
-                Text("QuikCal checks the public GitHub Releases feed about once a day (Sparkle's default cadence) and shows Sparkle's update alert when a new version is available. It only notifies — downloading, installing, and relaunching happen only when you choose.")
+                Text("QuikCal checks the public GitHub Releases feed about once a day and shows an update alert when a new version is available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -424,7 +424,7 @@ struct SettingsView: View {
                         .tint(Color(red: 0.45, green: 0.62, blue: 0.52))
                         .disabled(!appUpdater.canCheckForUpdates)
                 }
-                Text("Works even with automatic checking off. Updates are EdDSA-signed; nothing is ever downloaded, installed, or relaunched without your explicit action.")
+                Text("Works even with automatic checking off. Nothing is downloaded, installed, or relaunched without your explicit action.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -433,10 +433,10 @@ struct SettingsView: View {
 
             DisclosureGroup("Technical details") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(SpeechParsingStatusCopy.accessibilityHoldNote)
+                    Text("Typing still works if permission is denied.")
                     Text("Launch at login is not offered yet (would need a real ServiceManagement action).")
-                    Text("Updates: Sparkle from the public GitHub Releases appcast; automatic daily checks notify via the native update alert; installs are always explicit.")
-                    Text("Event extraction uses Apple Foundation Models on-device when available. macOS manages the language model; QuikCal does not download it. Every generated draft remains editable and requires your explicit confirmation.")
+                    Text("Updates: Sparkle from the public GitHub Releases appcast; releases are EdDSA-signed; automatic daily checks notify via the native update alert; installs are always explicit.")
+                    Text("Every generated draft stays editable until you confirm it.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -643,7 +643,7 @@ struct SettingsView: View {
                 Text("Unconfigured — a Google Cloud Desktop OAuth client ID is required.")
                     .font(.caption)
                     .foregroundStyle(.orange)
-                Text("This build’s Info.plist is missing GoogleDesktopOAuthClientID. Rebuild with the owner-supplied public Desktop client ID, or set the QUIET_CALENDAR_GOOGLE_CLIENT_ID environment override before launching. No redirect URI registration is needed — Google accepts loopback (127.0.0.1) redirects on any port. Steps: GOOGLE-CALENDAR-INTEGRATION.md.")
+                Text("This build’s Info.plist is missing GoogleDesktopOAuthClientID. Rebuild with the owner-supplied public Desktop client ID, or set the QUIET_CALENDAR_GOOGLE_CLIENT_ID environment override before launching. Steps: GOOGLE-CALENDAR-INTEGRATION.md.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -822,7 +822,7 @@ struct SettingsView: View {
 
                     Text(reduceTransparency
                          ? "Reduce Transparency is on — the colorful stage stays for contrast, but the bar is solid."
-                         : "Soft blue / coral / lilac behind the real voice bar. Drag the slider — the material applies to the bar background only; text stays sharp.")
+                         : "Soft blue / coral / lilac behind the real voice bar. The slider changes the bar background only — text stays sharp.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
@@ -841,13 +841,8 @@ struct SettingsView: View {
                     Text("Apple Intelligence")
                         .foregroundStyle(.secondary)
                 }
-                Text(SpeechParsingStatusCopy.parserDeterministicNote)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
 
-                settingsRow(symbol: "checkmark.icloud", title: "Apple Intelligence") {
+                settingsRow(symbol: "checkmark.icloud", title: "Extraction status") {
                     statusPill(vm.foundationModelsReadiness.shortLabel)
                 }
                 Text(vm.foundationModelsReadiness.userFacingText)
@@ -925,7 +920,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 4)
 
-                Text("The speech model is fetched from its pinned source and verified before use. Apple Foundation Models are supplied and managed by macOS; QuikCal does not download or import them.")
+                Text("The speech model is fetched from its pinned source and verified before use.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 14)
@@ -954,7 +949,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
 
-                Text("No hardware microphone picker — system default input only when you capture. Permission is requested only on mic / hold-to-talk, never at launch.")
+                Text("Uses the system default microphone. Permission is requested only when you capture.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 14)

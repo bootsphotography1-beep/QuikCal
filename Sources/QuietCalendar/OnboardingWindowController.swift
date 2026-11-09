@@ -1792,11 +1792,6 @@ struct OnboardingView: View {
                         persistSession()
                     }
                     .frame(maxWidth: 480)
-                    Text("Hold to speak, release to review.")
-                        .font(OnboardTone.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 460)
                     // Compact keyboard/gesture preview
                     VStack(spacing: 8) {
                         HStack(spacing: 16) {
@@ -1912,7 +1907,7 @@ struct OnboardingView: View {
                     // (Open Settings primary + drag/reveal + Check again) —
                     // never a dead-end "open settings" sentence.
                     if effectiveAccessibilityTrusted {
-                        Text("Accessibility granted — turn on hold-to-talk.")
+                        Text("Accessibility granted.")
                             .font(OnboardTone.body)
                             .frame(maxWidth: 480, alignment: .leading)
                         Button("Enable hold-to-talk") {
@@ -1983,7 +1978,7 @@ struct OnboardingView: View {
                     copyShortcutDiagnosticsButton
 
                 case .done:
-                    Text("Hold-to-talk guide complete. You can reopen it from Settings without resetting your calendar or glass prefs.")
+                    Text("Hold-to-talk guide complete. Reopen it anytime from Settings.")
                         .font(OnboardTone.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

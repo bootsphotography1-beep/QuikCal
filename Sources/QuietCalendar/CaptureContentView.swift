@@ -71,7 +71,7 @@ struct CaptureContentView: View {
         case .onboarding:
             // Inline fallback if panel opened before dedicated window.
             VStack(alignment: .leading, spacing: 10) {
-                Text("Finish setup in the onboarding window.")
+                Text("Finish setup to continue.")
                     .font(.system(.body, design: .default))
                 Button("Open onboarding") { onOpenOnboarding() }
                     .buttonStyle(.borderedProminent)
