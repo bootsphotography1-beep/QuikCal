@@ -17,7 +17,7 @@ Nothing is saved to your calendar automatically. Every event is shown to you fir
 | **Runs on** | macOS 14 (Sonoma) or newer. |
 | **Optional upgrade** | macOS 26 or newer on an Apple-Intelligence-capable Mac unlocks on-device AI extraction. Everything still works without it. |
 | **Where events go** | A calendar on your Mac (including your iCloud calendars) **or** a Google Calendar — you pick one, never both. |
-| **What leaves your Mac** | Nothing, unless you turn on Google Calendar or download the optional speech model. See [Part 8](#part-8--privacy-safety-and-what-leaves-your-mac). |
+| **What leaves your Mac** | Network traffic is used for Google Calendar, speech-model downloads, and update checks; Mac calendars can also sync through your calendar provider. See [Part 8](#part-8--privacy-safety-and-what-leaves-your-mac). |
 | **Latest published version** | 0.3.22 — see [Step 1: Download the app](#step-1-download-the-app). |
 | **Cost** | Free. The source is published here — see [Licensing](#licensing) for the licence position. |
 
@@ -33,7 +33,7 @@ Nothing is saved to your calendar automatically. Every event is shown to you fir
 | About **7 MB** to download | The `.dmg` installer is ~6.5 MB; the installed app is larger because it bundles a local speech-recognition helper and the update framework | **Yes** |
 | About **750 MB** of free disk space | The optional speech model, only if you want to talk to it | Optional |
 | A writable calendar | Events need somewhere to go | **Yes** (a local Mac calendar works; iCloud and Google also work) |
-| An internet connection | Only for the optional speech-model download and update checks. **Typing works completely offline.** | Optional |
+| An internet connection | Needed for downloading the app, Google Calendar, the optional speech model, and update checks. **Typing and saving to an available local Mac calendar work offline.** | Optional |
 | Apple Intelligence, macOS 26+, eligible Mac | Smarter text extraction | Optional — see below |
 
 **About Apple Intelligence (optional).** On newer Macs with Apple Intelligence turned on, QuikCal asks macOS's own on-device language model to read your note. On every other Mac, QuikCal uses its own built-in English parser, which understands the common ways people write dates and times. Both paths show you the same editable draft, and both require your confirmation. macOS manages the Apple model — QuikCal never downloads a text model.
@@ -59,47 +59,40 @@ The `.dmg` filename contains the version number, so a newer release has a newer 
 ### Step 2: Open the disk image
 
 1. Find `QuikCal-0.3.22.dmg` in your **Downloads** folder and double-click it.
-2. macOS mounts it like a USB stick: a window appears showing **QuikCal.app** and a **Applications** shortcut.
+2. macOS mounts it like a USB stick: a window appears showing **QuikCal.app** and an **Applications** shortcut.
 3. **Nothing starts automatically.** Opening the disk image does not launch the app — you drag it across first (next step).
 
-### Step 3: If macOS says it cannot open the app
+### Step 3: Move QuikCal into Applications
 
-Releases are signed with a **development certificate**, not with a paid **Developer ID** certificate, and they are **not notarized** by Apple. On a Mac that has never seen this app before, macOS may show one of these:
+1. Drag **QuikCal.app** onto the **Applications** shortcut in the disk-image window.
+2. Wait for the copy to finish. macOS may ask for your password or Touch ID.
+3. Eject the disk image using the eject button next to it in the Finder sidebar.
+4. Open your **Applications** folder. Always launch the installed copy from here, rather than from the disk image, so permissions apply to the copy you will keep using.
 
-- *"QuikCal cannot be opened because the developer cannot be verified."*
-- *"Apple cannot check it for malicious software."*
-- *"QuikCal is damaged and can't be opened."* (older wording)
+### Step 4: Launch it for the first time
 
-**The safe way to open it anyway (one time, for this app only):**
-
-1. **Control-click** (or right-click) **QuikCal.app** in the disk-image window.
-2. Choose **Open** from the menu (not "Open" from a double-click).
-3. A dialog appears with an **Open** button — click it.
-
-macOS remembers your choice for that app, so later launches are silent.
-
-**Please do not do these things** — they weaken the protection for your whole Mac, not just this app:
-
-- Do not switch off **Gatekeeper** or **System Integrity Protection** in System Settings.
-- Do not use `sudo xattr -r -d com.apple.quarantine` as a habit, and never apply it across your whole Applications folder.
-- Do not install from a random mirror. Use the link in Step 1.
-
-If the app is already in `/Applications` and still refuses to open, **Control-click it in the Applications folder → Open** — the same one-time exception applies.
-
-### Step 4: Move QuikCal into Applications
-
-1. Drag the **QuikCal.app** icon onto the **Applications** shortcut inside the disk-image window (or onto the Applications folder in your Dock).
-2. Wait for the copy to finish. macOS may ask for your password (or your Touch ID) to install an app — that is normal.
-3. **Eject the disk image:** close the disk-image window, then click the eject button next to `QuikCal` in the Finder sidebar (or Control-click the disk image → **Eject**).
-
-Keeping the app in Applications means it survives restarts and is easy to reopen later.
-
-### Step 5: Launch it for the first time
-
-1. Open **Applications** and double-click **QuikCal**.
-2. **Look at the top-right of your screen, in the menu bar** (the row with the clock, battery and Wi-Fi icons). QuikCal shows a small **calendar-with-a-plus** icon. It has **no Dock icon and no app window at this point** — that is by design, it is a menu-bar app.
-   - If you cannot see the icon, your menu bar is full: **Control-click the clock** (or click the small **^** chevron) to expand the hidden icons.
+1. In **Applications**, double-click **QuikCal**. If macOS blocks it, follow Step 5 below, then return here.
+2. Look in the **menu bar at the top-right of your screen**, near the clock, battery and Wi-Fi icons. QuikCal shows a small **calendar-with-a-plus** icon and has **no Dock icon**.
 3. The **setup window opens automatically** on first launch. Continue with [Part 2](#part-2--the-five-step-setup-walkthrough).
+
+If you cannot see the icon, switch to Finder so fewer app menus occupy the menu bar. On a Mac with a camera notch, some icons may not fit. If you use a menu-bar organizer, check its hidden icons. You can also reopen QuikCal from Applications: setup opens if unfinished, or Settings opens after setup.
+
+### Step 5: If macOS says it cannot open the app
+
+The current release is signed with a **development certificate** and is **not notarized** by Apple. macOS may say the developer cannot be verified or Apple cannot check the app for malicious software. Only continue if you downloaded it from this repository and trust the source.
+
+On newer macOS versions, use the per-app exception in System Settings:
+
+1. Attempt to open **QuikCal in Applications** once, then dismiss the warning.
+2. Open **Apple menu → System Settings → Privacy & Security**.
+3. Scroll to the **Security** section. Look for a message that QuikCal was blocked, then click **Open Anyway**, if available.
+4. Authenticate with your password or Touch ID if asked, then confirm **Open**.
+
+On older macOS versions, **Control-click QuikCal in Applications → Open** may offer the same one-time exception. If it does not, use the System Settings steps above. A managed work or school Mac may prevent overrides; contact its administrator if the option is unavailable.
+
+If macOS says the app **is damaged** or **will harm your computer**, stop instead of bypassing that warning. Delete that downloaded copy, download again from the Releases page, and report the problem if it persists.
+
+You do not need to disable Gatekeeper or System Integrity Protection, or run Terminal commands to remove quarantine. After opening successfully, return to Step 4 and continue setup.
 
 **How QuikCal behaves after setup (worth knowing now):**
 
@@ -168,9 +161,9 @@ macOS asks for permission separately for each capability. QuikCal only ever asks
 
 | Permission | When macOS asks | What breaks if you say no |
 |---|---|---|
-| **Microphone** | The first time you actually capture audio — by pressing the mic button or holding the talk-to key. **Never at launch.** | Talking to QuikCal stops working. Typing is unaffected. |
-| **Input Monitoring** | Only if your talk-to-talk key is **Fn (Globe)** and you press **Request…** / **Open…**. | Holding Fn cannot be detected. Typing is unaffected. |
-| **Accessibility** | Only if your talk-to-talk key is **Option, Command or Control** and you press **Request…**. | Holding that key cannot be detected. Typing is unaffected. |
+| **Microphone** | The first time you actually capture audio — by pressing the mic button or holding your chosen shortcut. **Never at launch.** | Talking to QuikCal stops working. Typing is unaffected. |
+| **Input Monitoring** | Only if your hold-to-talk key is **Fn (Globe)** and you press **Request…** / **Open…**. | Holding Fn cannot be detected. Typing is unaffected. |
+| **Accessibility** | Only if your hold-to-talk key is **Option, Command or Control** and you press **Request…**. | Holding that key cannot be detected. Typing is unaffected. |
 | **Calendars** | When you pick a calendar to write to. | QuikCal cannot show or add events. |
 | **Screen & System Audio Recording** | **Never.** QuikCal has no feature that needs it. | Nothing — it is listed in Settings for completeness only. |
 
@@ -187,7 +180,7 @@ The ordinary modifiers (**Option**, **Command**, **Control**) are delivered by t
 3. Turn the toggle **on** next to **QuikCal** (or click **Add…** and select the app if it is not listed).
 4. **For Input Monitoring: quit and reopen QuikCal.** macOS applies listen-access changes to *newly created* key taps, so an app that was already running may keep missing the key. Quit it from the menu-bar menu (right-click the icon → **Quit**), then open it again from Applications.
 5. **For Accessibility:** click **Check again** (or reopen the app) — the permission is normally picked up immediately, and a reopen always works.
-6. **For the microphone:** press the mic button or hold the talk-to-talk key; macOS shows the prompt; click **OK**. If you clicked **Don't Allow** by mistake, re-enable it in **System Settings → Privacy & Security → Microphone → QuikCal**.
+6. **For the microphone:** press the mic button or hold your chosen shortcut; macOS shows the prompt; click **OK**. If you clicked **Don't Allow** by mistake, re-enable it in **System Settings → Privacy & Security → Microphone → QuikCal**.
 
 ### Taking a permission away
 
@@ -322,33 +315,33 @@ Open Settings by right-clicking the menu-bar icon → **Settings**, or by openin
 
 ## Part 6 — Updating QuikCal
 
-QuikCal checks the public GitHub Releases feed about **once a day** and shows a normal macOS update alert when a newer version exists. It **only notifies** — nothing is downloaded, installed or relaunched without you clicking the install button. Releases are signed with an update key, so a tampered file is rejected.
+If you enable automatic update checks, QuikCal checks the public GitHub Releases feed about **once a day** and shows a normal macOS update alert when a newer version exists. It **only notifies** — nothing is downloaded, installed or relaunched without you clicking the install button. Releases are signed with an update key, so a tampered file is rejected.
 
 You can also check at any time: **Settings → General → Check for Updates…**.
 
-If you prefer to update by hand, download the newer `.dmg` from the [Releases page](https://github.com/bootsphotography1-beep/QuikCal/releases), drag the new `QuikCal.app` onto the old one in Applications, and choose **Replace**. Your settings are not affected.
+If you prefer to update by hand, quit QuikCal first, then download the newer `.dmg` from the [Releases page](https://github.com/bootsphotography1-beep/QuikCal/releases), drag the new `QuikCal.app` onto the old one in Applications, and choose **Replace**. Your settings are not affected.
 
 ---
 
 ## Part 7 — Troubleshooting
 
 **I cannot find the QuikCal icon.**
-QuikCal has no Dock icon — it only lives in the menu bar. Control-click the clock (or click the **^** chevron) to show hidden menu-bar icons. If it is still missing, the app may not be running: open it from **Applications**. If macOS blocked it, Control-click it in Applications → **Open**.
+QuikCal has no Dock icon. Switch to Finder to free menu-bar space, and check hidden icons if you use a menu-bar organizer. Open QuikCal from **Applications** to start it or reopen setup/Settings. If macOS blocks it, follow [Step 5](#step-5-if-macos-says-it-cannot-open-the-app).
 
 **I double-clicked the `.dmg` and nothing happened.**
 Opening the disk image does not launch the app. Drag **QuikCal.app** into **Applications**, eject the disk image, then open the app from Applications.
 
 **macOS says "cannot be opened because the developer cannot be verified".**
-See [Step 3](#step-3-if-macos-says-it-cannot-open-the-app). Use **Control-click → Open** once. Do not switch off Gatekeeper.
+Follow [Step 5](#step-5-if-macos-says-it-cannot-open-the-app) to use **System Settings → Privacy & Security → Open Anyway**, if offered. Do not switch off Gatekeeper.
 
 **Typing works, but holding the key does nothing.**
-This is a permission problem, not a bug.
+First check your shortcut permissions and whether hold-to-talk is enabled:
 - Using **Fn (Globe)** → grant **Input Monitoring**, then **quit and reopen** QuikCal (macOS only applies listen-access to newly created key taps).
 - Using **Option / Command / Control** → grant **Accessibility** (Input Monitoring works too).
 Check the status rows in **Settings → General**, press **Check again**, and confirm that **Enable hold-to-talk** is switched on.
 
 **The microphone prompt never appears.**
-That is intentional — macOS is only asked when you actually capture. Press the mic button or hold the talk-to-talk key to trigger it. If you previously clicked **Don't Allow**, re-enable it in **System Settings → Privacy & Security → Microphone → QuikCal**.
+That is intentional — macOS is only asked when you actually capture. Press the mic button or hold your chosen shortcut to trigger it. If you previously clicked **Don't Allow**, re-enable it in **System Settings → Privacy & Security → Microphone → QuikCal**.
 
 **"Did not resolve yet — fix the time below."**
 QuikCal could not determine the date and time from your note. Pick one of the suggested times, or type the time yourself. Nothing is added until the card is complete.
@@ -392,7 +385,7 @@ Nothing is stored in the app bundle. Your settings live in your user account, an
 - The **optional speech-model download** (~731 MB) from its pinned public source.
 - **Google** traffic, but only if you choose the Google destination and sign in.
 - The **update check** to the public GitHub Releases feed.
-- Typed notes stay on your Mac.
+- Event details are sent to Google when you confirm an event for the Google destination. Mac calendars may sync through iCloud or another configured account. Parsing and transcription happen on your Mac.
 
 **Credentials.** Google tokens are stored in the **Keychain**. If you import a Google client JSON, its secret goes to the Keychain and is never displayed in the app. Keep your own copy of that file private.
 
@@ -433,18 +426,15 @@ swift test                         # unit tests for the core logic
 ./scripts/accept_packaged_synthetic.sh   # packaged-speech acceptance test (needs a built app + a real model)
 ```
 
-`build_app.sh` requires the resolved **Sparkle.framework** artifact and exactly **one** valid **Apple Development** signing identity; it refuses to guess or fall back silently. `QUIKCAL_SIGN_MODE=adhoc` is an explicit local-development override. `build_dmg.sh` refuses to package an ad-hoc build unless `QUIKCAL_ALLOW_ADHOC_DMG=1` is also set. **Neither mode produces a Developer ID-signed or notarized app** — that is why end users get a one-time "Control-click → Open" prompt.
+`build_app.sh` requires the resolved **Sparkle.framework** artifact and exactly **one** valid **Apple Development** signing identity; it refuses to guess or fall back silently. `QUIKCAL_SIGN_MODE=adhoc` is an explicit local-development override. `build_dmg.sh` refuses to package an ad-hoc build unless `QUIKCAL_ALLOW_ADHOC_DMG=1` is also set. **Neither mode produces a Developer ID-signed or notarized app** — macOS may require the per-app exception described in [Step 5](#step-5-if-macos-says-it-cannot-open-the-app).
 
 Both scripts replace generated output under `build/` and `dist/`. Review those directories before running them.
 
 ### Releases
 
-```sh
-./scripts/prepare_release_assets.sh   # builds the Sparkle zip + EdDSA-signed appcast
-./scripts/publish_release.sh --confirm --with-dmg
-```
+Download published installers and update packages from the [Releases page](https://github.com/bootsphotography1-beep/QuikCal/releases). Building a local app or disk image does not upload anything to GitHub.
 
-`publish_release.sh` is an explicit human action. It never runs automatically, it never publishes source, and it does not create tags or releases on its own.
+The maintainer's release-preparation and publication scripts are not included in this published source snapshot. Creating a distributable update additionally requires the maintainer's signing setup; running the build commands above does not create an official release.
 
 ### Configuration reference (`Resources/Info.plist`)
 
@@ -485,6 +475,6 @@ There is **no project-level LICENSE file** in this repository, and none has been
 ## Honest status
 
 - The **publicly installable artifact** is the release `.dmg` on the [Releases page](https://github.com/bootsphotography1-beep/QuikCal/releases) — that link is real and the file is downloadable today.
-- The app is signed with a **development certificate and is not notarized**, so the first launch needs the one-time **Control-click → Open** step.
+- The app is signed with a **development certificate and is not notarized**, so macOS may require the per-app **Open Anyway** exception described in [Step 5](#step-5-if-macos-says-it-cannot-open-the-app).
 - Release binaries are built from this source tree, but **the published app was not run end-to-end against a live Google account or a real calendar as part of publishing**. Behaviour described here comes from the code and from the shipped release notes.
 - The speech model is **not bundled**; it is downloaded on demand and verified against a pinned checksum.
