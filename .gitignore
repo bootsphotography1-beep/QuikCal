@@ -14,8 +14,17 @@
 # Vendored upstream speech-engine source: keep the pinned tree, ignore its build output
 /vendor/local-models/transcribe.cpp/build/
 
-# Research, model-evaluation and design artifacts (not part of the published source)
-/model-research/
+# Research, model-evaluation and design artifacts (not part of the published source).
+# Only the frozen qwen35-4b fixtures consumed by tests/harness are whitelisted by
+# exact name; future eval/held-out run outputs stay local (ignored).
+/model-research/*
+!/model-research/qwen35-4b/
+/model-research/qwen35-4b/*
+!/model-research/qwen35-4b/heldout_qwen35_4b_v2.json
+!/model-research/qwen35-4b/HELDOUT_PROTOCOL_SHA256.txt
+!/model-research/qwen35-4b/heldout_results_20261106-161119.json
+!/model-research/qwen35-4b/preregistered_qwen35_4b_v1.json
+!/model-research/qwen35-4b/qwen35_4b_eval_20261106-154824.json
 /research/
 /design/
 /design-references/
@@ -48,3 +57,10 @@
 *.provisionprofile
 client_secret*.json
 *-client-secret*.json
+
+# Design review captures (evidence of the 2026-11-12 redesign; archived off-repo)
+/design-reviews/
+
+# Python bytecode
+__pycache__/
+*.pyc

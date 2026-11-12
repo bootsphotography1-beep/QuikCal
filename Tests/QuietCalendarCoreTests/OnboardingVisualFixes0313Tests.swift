@@ -69,15 +69,19 @@ struct OnboardingVisualFixes0313Tests {
             == (red: 30.0 / 255.0, green: 30.0 / 255.0, blue: 30.0 / 255.0))
     }
 
-    @Test func onboardingControllerPaintsThePolicyRootColorAndNoGradient() throws {
+    @Test func onboardingControllerPaintsTheApprovedTokenRootAndNoGradient() throws {
         let source = try onboardingControllerSource()
         let flat = normalized(source)
-        // The root background uses the policy constants…
-        #expect(flat.contains("OnboardingVoiceVisualPolicy.rootBackgroundDarkRGB"))
-        #expect(flat.contains("OnboardingVoiceVisualPolicy.rootBackgroundLightRGB"))
+        // 2026-11-12 approved redesign: the root paints the shared
+        // `QuietDesign.Color.background(colorScheme)` token (sampled from
+        // the approved screens: #F8FAF9 light / #202423 dark), never a
+        // gradient and never the retired solid #FFFFFF/#1E1E1E policy pair.
+        #expect(flat.contains("QuietDesign.Color.background(colorScheme)"))
         // …and the old full-window gradient/atmosphere overlays are gone.
         #expect(!source.contains("RadialGradient"))
         #expect(!flat.contains("blendMode(.plusLighter)"))
+        #expect(!flat.contains("OnboardingVoiceVisualPolicy.rootBackgroundLightRGB"))
+        #expect(!flat.contains("OnboardingVoiceVisualPolicy.rootBackgroundDarkRGB"))
     }
 
     // MARK: - F4: deep-sage primary fill (AA contrast)
@@ -121,7 +125,7 @@ struct OnboardingVisualFixes0313Tests {
         // 2026-11-07 builder's tall modelPackPanel stack (parent visual
         // finding A: no model-name rows, no repeated Ready badges, grant
         // steps under disclosure).
-        #expect(flat.contains("sceneTitle( \"Voice setup\","))
+        #expect(flat.contains("sceneTitle( \"Try a quick hold.\","))
         #expect(flat.contains("voiceModelRow"))
         #expect(flat.contains("voiceAccessibilityRow"))
         #expect(flat.contains("FnKeyCapView("))
@@ -196,16 +200,14 @@ struct OnboardingVisualFixes0313Tests {
 
     // MARK: - F5: Google signed-out — no duplicated subtitle, no explainer
 
-    @Test func signInSubtitleAppearsExactlyOnce() throws {
+    @Test func googleOptionRowUsesTheApprovedRedesignCopy() throws {
         let source = try onboardingControllerSource()
-        // The subtitle copy (`OnboardingGoogleCopy.subtitle` =
-        // "Sign in to connect your calendar.") is referenced exactly ONCE in
-        // the onboarding view — the destination-row caption. The signed-out
-        // chooser no longer repeats it (parent visual review: it showed
-        // twice in the same screen).
-        let needle = "OnboardingGoogleCopy.subtitle"
-        let count = source.components(separatedBy: needle).count - 1
-        #expect(count == 1)
+        // 2026-11-12 approved redesign: the Google destination row reads
+        // "Google Calendar — Connect your Google account."; the onboarding
+        // view no longer references the retired "Sign in to connect your
+        // calendar." copy anywhere.
+        #expect(source.contains("Connect your Google account."))
+        #expect(!source.contains("OnboardingGoogleCopy.subtitle"))
         // And the copy itself is unchanged (pinned since 0.3.12).
         #expect(OnboardingGoogleCopy.subtitle == "Sign in to connect your calendar.")
     }

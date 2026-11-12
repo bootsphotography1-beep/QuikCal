@@ -146,6 +146,17 @@ final class OnboardingWindowController: NSWindowController {
             setupGapPage: setupGapPage,
             launchEntryCard: launchEntryCard,
             onOpenSettings: onOpenSettings,
+            onCloseRequest: { [weak self] in
+                // Close orders the window out WITHOUT completing onboarding;
+                // the status-menu Start/Replay Setup path stays available.
+                self?.close()
+            },
+            onMinimizeRequest: { [weak self] in
+                self?.window?.miniaturize(nil)
+            },
+            onZoomRequest: { [weak self] in
+                self?.window?.zoom(nil)
+            },
             onFinished: { [weak self] in
                 self?.onFinished?()
             }
@@ -174,18 +185,17 @@ final class OnboardingWindowController: NSWindowController {
 // MARK: - Palette / type
 
 private enum OnboardTone {
-    static let brand = Font.system(size: 34, weight: .semibold, design: .serif)
-    static let display = Font.system(size: 26, weight: .semibold, design: .serif)
-    static let body = Font.system(size: 15, weight: .regular, design: .default)
-    static let caption = Font.system(size: 12.5, weight: .regular, design: .default)
+    /// 2026-11-12 redesign: SF Pro system type via the shared tokens.
+    static let brand = QuietDesign.Typography.display
+    static let display = QuietDesign.Typography.title
+    static let body = QuietDesign.Typography.body
+    static let caption = QuietDesign.Typography.caption
+    static let subtitle = QuietDesign.Typography.subtitle
     /// Soft sage — quiet, not purple / terracotta. Accent/rings ONLY
     /// (step dots, icons, checkmarks, slider tint, sample-tile waveform).
-    static let accent = Color(red: 0.45, green: 0.62, blue: 0.52)
-    /// Deep sage #4e7a62 (design 6:39/6:67/6:151/6:246/7:119 + card tokens):
-    /// the primary-button FILL. White 15 pt medium text on it is AA
-    /// (4.9:1); on the lighter #739e85 accent it is only ~3:1, which is
-    /// why the accent is never a white-text fill.
-    static let primaryFill = Color(red: 0.306, green: 0.478, blue: 0.384)
+    static let accent = QuietDesign.Color.accent
+    /// Deep sage #4e7a62 — the primary-button FILL.
+    static let primaryFill = QuietDesign.Color.primaryFill
 }
 
 struct OnboardingView: View {
@@ -222,6 +232,12 @@ struct OnboardingView: View {
     var launchEntryCard: Bool = false
     /// "Open Settings" action for the entry card.
     var onOpenSettings: () -> Void = {}
+    /// Title-bar window controls (2026-11-12 redesign). Close orders the
+    /// window out WITHOUT completing onboarding; Minimize/Zoom forward to
+    /// the window. The controller wires these to its own NSWindow.
+    var onCloseRequest: () -> Void = {}
+    var onMinimizeRequest: () -> Void = {}
+    var onZoomRequest: () -> Void = {}
     var onFinished: () -> Void
 
     @State private var session = OnboardingSessionState()
@@ -254,12 +270,13 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            atmosphere
+            // 2026-11-12 redesign: solid neutral root from the shared tokens
+            // (sampled from the approved Figma screens), following the Mac
+            // appearance automatically.
+            QuietDesign.Color.background(colorScheme)
+                .ignoresSafeArea()
             VStack(spacing: 0) {
-                topChrome
-                    .padding(.horizontal, 28)
-                    .padding(.top, 36)
-                    .padding(.bottom, 8)
+                titleBar
 
                 if launchCardVisible {
                     // 0.3.13 launch entry card (design 7:330/7:349): the
@@ -284,26 +301,15 @@ struct OnboardingView: View {
 
                     downloadBanner
                 } else {
+                    stepHeader
                     stepScene
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 36)
+                        .padding(.horizontal, QuietDesign.Metric.contentPadding)
                         .id(session.page)
                         .transition(stepTransition)
 
                     downloadBanner
-
-                    // P1-2: clear footer separation on Voice setup so scroll
-                    // content can never visually merge into the footer buttons.
-                    if session.page == .voiceSetup {
-                        Divider()
-                            .padding(.horizontal, 28)
-                            .padding(.top, ModelsLayoutPolicy.footerTopSeparation)
-                    }
-
-                    bottomChrome
-                        .padding(.horizontal, 28)
-                        .padding(.bottom, 24)
-                        .padding(.top, 16)
+                    bottomBar
                 }
             }
         }
@@ -442,6 +448,43 @@ struct OnboardingView: View {
         return true
     }
 
+    /// The calendar's live stage — derived from the destination selection
+    /// and the REAL EventKit / Google state, never hardcoded. Drives both
+    /// the calendar scene and the primary-action label.
+    private enum CalendarStage: Equatable {
+        /// Mac calendars selected; EventKit not determined yet.
+        case choosing
+        /// EventKit granted or write-only — a real connection.
+        case macConnected
+        /// Google selected; account not signed in (or browser flow pending).
+        case googleConnect
+        /// Google selected; account signed in (destination picker shown).
+        case googleConnected
+        /// The last connection attempt failed or access was denied.
+        case error
+    }
+
+    private var calendarStage: CalendarStage {
+        if destinationKind == .google {
+            switch googleAuth.phase {
+            case .signedIn:
+                return .googleConnected
+            case .error:
+                return .error
+            case .unconfigured, .signedOut, .authorizing:
+                return .googleConnect
+            }
+        }
+        switch vm.accessPhase {
+        case .granted, .writeOnly:
+            return .macConnected
+        case .denied:
+            return .error
+        default:
+            return .choosing
+        }
+    }
+
     /// Real calendar-connection state for the card's honest bullets.
     /// 2026-11-07 owner correction: a WRITE-ONLY EventKit grant is still a
     /// real connection (events can be added to the default calendar) —
@@ -536,55 +579,84 @@ struct OnboardingView: View {
         )
     }
 
-    // MARK: Root background
+    // MARK: Chrome (2026-11-12 redesign)
 
-    /// Solid system root (owner rule + design 6:14/6:41/6:122/6:211/7:95,
-    /// all `bg-white` light / dark equivalent): plain #FFFFFF light /
-    /// #1E1E1E dark, following the Mac appearance automatically — no
-    /// gradient, no radial accent, no theme selector. The ONLY gradient in
-    /// onboarding lives inside the glass sample tiles (GlassComparisonTile).
-    private var atmosphere: some View {
-        let rgb = colorScheme == .dark
-            ? OnboardingVoiceVisualPolicy.rootBackgroundDarkRGB
-            : OnboardingVoiceVisualPolicy.rootBackgroundLightRGB
-        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
-            .ignoresSafeArea()
-    }
-
-    // MARK: Chrome
-
-    private var topChrome: some View {
-        HStack(alignment: .center) {
+    /// Native-look title bar: traffic lights, centered product title, and a
+    /// quiet "Setup" action. The window stays borderless/floating (the
+    /// documented no-accidental-close contract), so the controls are drawn
+    /// to match the system chrome and wired to safe window actions — Close
+    /// orders the window out WITHOUT marking onboarding complete; Minimize
+    /// and Zoom forward to the window.
+    private var titleBar: some View {
+        ZStack {
+            QuietDesign.Color.titleBar(colorScheme)
+            HStack(spacing: 0) {
+                trafficLights
+                Spacer(minLength: 12)
+                Button("Setup") { onOpenSettings() }
+                    .buttonStyle(QuietTextButtonStyle())
+            }
+            .padding(.horizontal, 20)
             Text("QuikCal")
-                .font(.system(size: 13, weight: .semibold, design: .serif))
-                .foregroundStyle(.primary.opacity(0.85))
-            Spacer()
-            // The launch entry card is pre-flow: the step dots (and the
-            // footer actions) stay hidden until Start/Resume Setup.
-            if !launchCardVisible {
-                stepDots
-            }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme).opacity(0.85))
         }
+        .frame(height: QuietDesign.Metric.titleBarHeight)
         .opacity(appeared ? 1 : 0)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(QuietDesign.Color.separator(colorScheme))
+                .frame(height: 1)
+        }
     }
 
-    private var stepDots: some View {
-        HStack(spacing: 6) {
-            // 2026-11-07: the dot ORDER is the explicit flow order — raw
-            // values are frozen and no longer monotonic with the walk
-            // (axPermission = 4 sits between calendar and voiceSetup).
-            ForEach(OnboardingPage.flowOrder, id: \.self) { page in
-                Capsule()
-                    .fill(page == session.page
-                          ? OnboardTone.accent
-                          : Color.primary.opacity(page.flowIndex < session.page.flowIndex ? 0.35 : 0.12))
-                    .frame(width: page == session.page ? 18 : 6, height: 6)
-                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: session.page)
-                    .accessibilityHidden(true)
-            }
+    private var trafficLights: some View {
+        HStack(spacing: 8) {
+            trafficLight(color: Color(red: 1.0, green: 0.373, blue: 0.341),
+                         label: "Close window", action: onCloseRequest)
+            trafficLight(color: Color(red: 0.992, green: 0.737, blue: 0.18),
+                         label: "Minimize window", action: onMinimizeRequest)
+            trafficLight(color: Color(red: 0.157, green: 0.784, blue: 0.251),
+                         label: "Zoom window", action: onZoomRequest)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(session.page.flowIndex + 1) of \(OnboardingPage.flowOrder.count)")
+    }
+
+    private func trafficLight(color: Color, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// The approved three-step indicator (Calendar · Voice access · Try it),
+    /// shown on the capability steps only. Welcome and Ready are the flow's
+    /// anchors and show no indicator.
+    @ViewBuilder
+    private var stepHeader: some View {
+        if let index = currentStepIndex {
+            QuietStepIndicator(
+                steps: ["Calendar", "Voice access", "Try it"],
+                currentIndex: index
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, QuietDesign.Metric.stepTopPadding)
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// Maps the frozen flow pages onto the approved three-step indicator:
+    /// calendar → 1, axPermission (Voice access) → 2, voiceSetup (Try it) → 3.
+    /// Welcome and Ready show no indicator.
+    private var currentStepIndex: Int? {
+        switch session.page {
+        case .calendar: return 0
+        case .axPermission: return 1
+        case .voiceSetup: return 2
+        case .welcome, .ready: return nil
+        }
     }
 
     /// Compact global progress that persists across pages while the shared
@@ -646,44 +718,72 @@ struct OnboardingView: View {
         )
     }
 
-    private var bottomChrome: some View {
-        HStack(spacing: 16) {
-            if session.page != .welcome || holdGuideOnly {
-                Button("Back") {
-                    animateStep { goBack() }
+    private var bottomBar: some View {
+        ZStack {
+            HStack(spacing: 16) {
+                if session.page != .welcome || holdGuideOnly {
+                    Button("Back") {
+                        animateStep { goBack() }
+                    }
+                    .buttonStyle(QuietTextButtonStyle())
                 }
-                .buttonStyle(QuietTextButtonStyle())
-            }
-            Spacer()
-            if session.page.isSkippable || (holdGuideOnly && session.holdGuide.phase != .done) {
-                Button("Skip") {
-                    animateStep { skipForward() }
+                Spacer()
+                Button(primaryLabel) {
+                    animateStep { goPrimary() }
                 }
-                .buttonStyle(QuietTextButtonStyle())
+                .buttonStyle(QuietPrimaryButtonStyle())
+                .keyboardShortcut(.defaultAction)
+                .disabled(session.page == .calendar && calendarStage == .googleConnect && googleAuth.phase == .authorizing)
             }
-            Button(primaryLabel) {
-                animateStep { goPrimary() }
+            if let index = currentStepIndex {
+                Text("\(index + 1) of 3")
+                    .font(QuietDesign.Typography.caption)
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("Step \(index + 1) of 3")
             }
-            .buttonStyle(QuietPrimaryButtonStyle())
-            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, QuietDesign.Metric.chromePadding)
+        .frame(height: QuietDesign.Metric.bottomBarHeight)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(QuietDesign.Color.separator(colorScheme))
+                .frame(height: 1)
         }
     }
 
+    /// The approved per-screen primary action. The label is derived from the
+    /// live scene state (never hardcoded success): the calendar stage, the
+    /// permission stage, and the practice stage each name their own action.
     private var primaryLabel: String {
         if holdGuideOnly && session.holdGuide.phase == .done {
             return "Done"
         }
         switch session.page {
-        case .ready: return "Finish setup"
-        case .welcome: return "Get started"
-        case .axPermission: return "Continue"
+        case .welcome:
+            return "Get started"
+        case .calendar:
+            switch calendarStage {
+            case .choosing: return "Connect calendar"
+            case .macConnected, .googleConnected: return "Continue"
+            case .googleConnect: return "Continue with Google"
+            case .error: return "Try again"
+            }
+        case .axPermission:
+            return effectiveStepPermissionGranted ? "Try my voice" : "Open System Settings"
         case .voiceSetup:
             if holdGuideOnly {
                 if session.holdGuide.phase == .done || session.holdGuide.phase == .practiceHold { return "Continue" }
                 return "Setup shortcut"
             }
-            return "Continue"
-        case .calendar: return "Continue"
+            if !modelDownload.isSpeechReady { return "Finish setup" }
+            switch effectivePracticeKeyState {
+            case .holding: return "Cancel practice"
+            case .released: return "Finish setup"
+            default: return "Skip practice"
+            }
+        case .ready:
+            return "Open QuikCal"
         }
     }
 
@@ -700,25 +800,6 @@ struct OnboardingView: View {
             return
         }
         session.goBack()
-        persistSession()
-    }
-
-    private func skipForward() {
-        if holdGuideOnly, session.page == .voiceSetup {
-            session.holdGuide.skipRemainder()
-            holdToTalk.practicePreviewOnly = false
-            holdToTalk.stopMonitoring()
-            persistSession()
-            onFinished()
-            return
-        }
-        if session.page == .voiceSetup {
-            // Core flow: the merged page's guide state is a single
-            // checkpoint — skipping records the page and moves on.
-            session.holdGuide.skipRemainder()
-            holdToTalk.practicePreviewOnly = false
-        }
-        session.skipCurrent()
         persistSession()
     }
 
@@ -740,6 +821,27 @@ struct OnboardingView: View {
         }
         if holdGuideOnly, session.page == .voiceSetup {
             advanceHoldGuide()
+            return
+        }
+        if session.page == .calendar {
+            switch calendarStage {
+            case .choosing:
+                // Explicit user action — the ONLY path that asks EventKit.
+                vm.requestCalendarAccess()
+            case .macConnected, .googleConnected:
+                session.goNext()
+                persistSession()
+            case .googleConnect:
+                // Explicit user action — opens the browser only on this tap.
+                if googleAuth.phase != .authorizing { googleAuth.beginSignIn() }
+            case .error:
+                if destinationKind == .google {
+                    googleAuth.beginSignIn()
+                } else {
+                    vm.requestCalendarAccess()
+                    vm.refreshSelection()
+                }
+            }
             return
         }
         session.goNext()
@@ -832,14 +934,23 @@ struct OnboardingView: View {
     /// Mic is requested ONLY from an explicit hold (never here).
     private var voiceSetupScene: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
                 sceneTitle(
-                    "Voice setup",
-                    subtitle: "Hold \(shortcutSelection.displayName) to speak, release to review — or type anytime."
+                    "Try a quick hold.",
+                    subtitle: "Hold \(shortcutSelection.shortName) to speak. Release to review."
                 )
-                // 1. ONE compact voice-model row (skip-if-ready).
+                // 1. ONE compact voice-model row / download card
+                // (skip-if-ready): the 2026-11-12 design keeps the download
+                // INSIDE the Try-it step — progress is live from the shared
+                // ParakeetModelDownload service, never a fixed percentage.
                 voiceModelRow
-                HStack(spacing: 8) {
+                if modelDownload.isTransferring {
+                    Label("Typing is available right away.", systemImage: "lock")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .frame(maxWidth: 480, alignment: .leading)
+                }
+                HStack(spacing: 6) {
                     voiceModelDetailsDisclosure
                     #if DEBUG
                     if modelDownload.isQAFixtureActive {
@@ -854,19 +965,23 @@ struct OnboardingView: View {
                         .font(OnboardTone.caption)
                         .foregroundStyle(.orange)
                 }
-                // 2. ONE concise Accessibility permission row. Untrusted:
+                // 2. ONE concise accessibility permission row. Untrusted:
                 // one line + Open Settings + Check again, grant steps and
                 // the drag tile under the optional disclosure. Trusted:
                 // the Granted row only — never 3 permission microsteps.
                 voiceAccessibilityRow
-                // 3. Shortcut + REAL Fn practice (live monitor only) —
-                // compact: keycap, Try it, and the live status share ONE
-                // row so the whole practice fits above the footer at the
-                // default 640×600 size (the ScrollView stays for
-                // accessibility text sizes only).
-                VStack(alignment: .leading, spacing: 6) {
+                // 3. REAL hold-to-talk practice (live monitor only).
+                // 2026-11-12 approved layout: keycap, consent-armed "Try
+                // it" (installing the global listener ALWAYS needs this
+                // explicit tap — never implicit at page show), a status
+                // pill whose text comes from PracticeDetectionPolicy, and
+                // the instructional "Try saying" card — never a fake
+                // transcript. Practice mode parses nothing and saves
+                // nothing (PracticeDraftPolicy).
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Hold-to-talk shortcut")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
                         .frame(maxWidth: 480, alignment: .leading)
                     HoldShortcutGradientPicker(selection: $shortcutSelection) { kind in
                         holdToTalk.setShortcut(kind)
@@ -874,50 +989,106 @@ struct OnboardingView: View {
                         persistSession()
                     }
                     .frame(maxWidth: 480)
-                    HStack(alignment: .center, spacing: 14) {
-                        FnKeyCapView(
-                            keyLabel: shortcutSelection.shortName,
-                            state: effectivePracticeKeyState,
-                            reduceMotion: reduceMotion
-                        )
-                        VStack(alignment: .leading, spacing: 6) {
-                            Button("Try it") {
-                                holdToTalk.practicePreviewOnly = true
-                                holdToTalk.startMonitoringIfPermitted()
-                                holdToTalk.onPracticeRelease = {
-                                    session.holdGuide.markPracticeHoldSeen()
-                                    persistSession()
-                                }
+                }
+                HStack(alignment: .center, spacing: 16) {
+                    FnKeyCapView(
+                        keyLabel: shortcutSelection.shortName,
+                        state: effectivePracticeKeyState,
+                        reduceMotion: reduceMotion
+                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("Try it") {
+                            holdToTalk.practicePreviewOnly = true
+                            holdToTalk.startMonitoringIfPermitted()
+                            holdToTalk.onPracticeRelease = {
+                                session.holdGuide.markPracticeHoldSeen()
                                 persistSession()
                             }
-                            .buttonStyle(QuietPrimaryButtonStyle())
-                            Text(practiceHoldStatus)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 380, alignment: .leading)
+                            persistSession()
                         }
+                        .buttonStyle(QuietPrimaryButtonStyle())
+                        practicePill
                         #if DEBUG
                         if qaPracticeKeyFixture != nil {
                             qaFixtureChip("QA fixture — simulated key state")
                         }
                         #endif
                     }
-                    .frame(maxWidth: 480, alignment: .leading)
-                    Text(HoldToTalkGuideCopy.practiceNothingSavedNote)
-                        .font(OnboardTone.caption)
-                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: 480, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        QuietSectionLabel(text: "Try saying")
+                        Spacer(minLength: 8)
+                        Label("Practice only. Nothing is saved.", systemImage: "lock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                            .labelStyle(.titleAndIcon)
+                    }
+                    Text("“Lunch with Alex tomorrow at noon.”")
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .frame(maxWidth: 480, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .fill(QuietDesign.Color.card(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
+                )
+                // Quiet footnote rail: the practice notice is merged into
+                // the Try-saying card header (lock + “Practice only…”), so
+                // the whole practice fits 640×600 without clipping.
                 // Compact local gutter (2026-11-07 review): the shared
                 // ModelsLayoutPolicy.bottomGutter (20 pt) was sized for the
                 // retired tall page; the compact page uses a small local
                 // gutter so the practice + note fit above the footer.
                 Color.clear
-                    .frame(height: 6)
+                    .frame(height: 1)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, 4)
         }
+    }
+
+    /// Live status pill for practice — mirrors the approved design's
+    /// full-width pill (mic / red dot + waveform while held). The text is
+    /// ALWAYS the PracticeDetectionPolicy sentence (never a timer, never a
+    /// simulated state); the accessibility value is the same string.
+    private var practicePill: some View {
+        let holding = effectivePracticeKeyState == .holding
+        return HStack(spacing: 8) {
+            if holding {
+                Circle()
+                    .fill(Color(red: 0.843, green: 0.0, blue: 0.082))
+                    .frame(width: 8, height: 8)
+                Image(systemName: "waveform")
+                    .font(.system(size: 13, weight: .semibold))
+            } else {
+                Image(systemName: "mic")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(QuietDesign.Color.primaryFill)
+            }
+            Text(practiceHoldStatus)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(
+            Capsule(style: .continuous)
+                .fill(QuietDesign.Color.pillIdle(colorScheme))
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(practiceHoldStatus)
     }
 
     /// Small labelled QA-fixture chip (DEBUG only) — compact so fixture
@@ -950,35 +1121,25 @@ struct OnboardingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 sceneTitle(
-                    HoldToTalkPermissionCopy.stepTitle(),
-                    subtitle: HoldToTalkPermissionCopy.stepSubtitle(for: holdToTalk.machine.shortcut)
+                    effectiveStepPermissionGranted ? "Your shortcut is ready." : "Speak from anywhere.",
+                    subtitle: effectiveStepPermissionGranted
+                        ? "QuikCal can now detect when you hold \(holdToTalk.machine.shortcut.displayName).\nLet's give it a try."
+                        : "Let QuikCal detect when you hold \(holdToTalk.machine.shortcut.displayName),\nso you can add an event from any app.",
+                    alignment: .leading
+                )
+                // The approved two-row card (Shortcut access · Microphone)
+                // is the SAME surface in every untrusted/granted state —
+                // only its chip flips. Install-first copies keep it too:
+                // the required capability genuinely is not enabled.
+                axPermissionRowsCard(
+                    chip: effectiveStepPermissionGranted ? "Allowed" : "Not enabled",
+                    chipTone: effectiveStepPermissionGranted ? .success : .neutral
                 )
                 if effectiveStepPermissionGranted {
-                    // GRANTED — from the real probe only (or the labelled
-                    // DEBUG fixture). One honest row, same design language.
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(OnboardTone.accent)
-                            .frame(width: 32, height: 32)
-                            .background(Circle().fill(OnboardTone.accent.opacity(0.10)))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(AccessibilityDragGuideCopy.enabledCheck)
-                                .font(.system(size: 14, weight: .semibold))
-                            Text(HoldToTalkPermissionCopy.grantedStatus(for: holdToTalk.machine.shortcut))
-                                .font(OnboardTone.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 8)
-                    }
-                    .frame(maxWidth: 480, alignment: .leading)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.primary.opacity(0.05))
-                    )
-                    .accessibilityElement(children: .combine)
+                    Label("QuikCal listens only while you hold the shortcut.", systemImage: "lock")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .frame(maxWidth: 480, alignment: .leading)
                     #if DEBUG
                     if qaAXTrusted {
                         qaFixtureChip("QA fixture — simulated trust, not a real grant")
@@ -1001,6 +1162,23 @@ struct OnboardingView: View {
                     }
                     .frame(maxWidth: 480)
                 } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Turn on QuikCal in \(stepRequiredCapability.displayName).")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text("System Settings → Privacy & Security → \(stepRequiredCapability.displayName)")
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                    .frame(maxWidth: 480, alignment: .leading)
+                    Button("Set up voice later") {
+                        animateStep { setupVoiceLater() }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: 480)
+                    .accessibilityHint("Skips the voice steps. You can enable voice anytime in Settings.")
                     // Capability rows (2026-11-07 privacy repair): the
                     // REQUIRED capability for the current shortcut comes
                     // FIRST, with its own pane-open button — clicking
@@ -1115,6 +1293,61 @@ struct OnboardingView: View {
         }
     }
 
+    /// The approved permission card (both live states): Shortcut access
+    /// — gate chip derives from the REAL capability probe, plus
+    /// Microphone, which is never requested from this page.
+    private func axPermissionRowsCard(
+        chip: String,
+        chipTone: QuietStatusChip.QuietStatusTone
+    ) -> some View {
+        QuietCard(padding: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    QuietIconTile(systemImage: "key.fill", side: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Shortcut access")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text("\(stepRequiredCapability.displayName) · needed for \(holdToTalk.machine.shortcut.displayName)")
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                    Spacer(minLength: 8)
+                    QuietStatusChip(text: chip, tone: chipTone)
+                }
+                .padding(14)
+                Rectangle()
+                    .fill(QuietDesign.Color.separator(colorScheme))
+                    .frame(height: 1)
+                HStack(spacing: 12) {
+                    QuietIconTile(systemImage: "mic.fill", side: 38)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Microphone")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text("Asked when you first speak")
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                    Spacer(minLength: 8)
+                }
+                .padding(14)
+            }
+        }
+        .frame(maxWidth: 480)
+    }
+
+    /// "Set up voice later" (approved permission screen): marks BOTH
+    /// voice pages skipped through the SAME persisted resume path the
+    /// flow writes itself, then lands on Ready. Typing works; voice can
+    /// be enabled anytime in Settings. Never claims voice readiness.
+    private func setupVoiceLater() {
+        session.skipped.insert(.axPermission)
+        session.skipped.insert(.voiceSetup)
+        session.page = .ready
+        persistSession()
+    }
+
     /// Live status line for the verification step — truthful per phase,
     /// never a simulated state.
     private var axStepStatusText: String {
@@ -1189,7 +1422,11 @@ struct OnboardingView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
+                .fill(QuietDesign.Color.card(colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
     }
@@ -1293,76 +1530,99 @@ struct OnboardingView: View {
     /// Apple Foundation Models are managed by macOS and are never downloaded
     /// by QuikCal.
     /// Transferring → inline progress + Cancel. Honest failures inline.
+    ///
+    /// The 2026-11-12 design renders it as the Try-it step's "Getting voice
+    /// ready." download card while a transfer is live (progress always from
+    /// the shared ParakeetModelDownload service; skip-if-ready shows one
+    /// calm ready row; failed/cancelled stay honest with retry).
     @ViewBuilder
     private var voiceModelRow: some View {
         let snap = modelDownload.snapshot
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "waveform")
-                .font(.system(size: 15))
-                .foregroundStyle(OnboardTone.accent)
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(OnboardTone.accent.opacity(0.10)))
-            VStack(alignment: .leading, spacing: 3) {
-                if modelDownload.isSpeechReady {
-                    // Skip-if-ready: weights on disk → one compact ready row.
-                    // 2026-11-07 owner correction: "Voice MODEL ready" —
-                    // truthful scope. Weights on disk make the model ready;
-                    // they do NOT make hold-to-talk work (that also needs
-                    // Accessibility + the Fn listener), so the row never
-                    // claims the whole voice feature is ready.
+        return Group {
+            if modelDownload.isSpeechReady {
+                // Skip-if-ready: weights on disk → one compact ready row.
+                HStack(spacing: 12) {
+                    QuietIconTile(systemImage: "waveform", side: 26)
                     Label("Voice model ready", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OnboardTone.accent)
-                } else if modelDownload.isTransferring {
-                    Text("Downloading voice model…")
-                        .font(.system(size: 14, weight: .medium))
-                    if let fraction = speechProgressFraction {
-                        ProgressView(value: fraction)
-                            .tint(OnboardTone.accent)
-                    }
-                    Text(VoiceOverlayPolicy.progressLabel(
-                        received: snap.bytesReceived,
-                        total: snap.bytesExpected ?? 0
-                    ))
-                        .font(OnboardTone.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Voice model")
-                        .font(.system(size: 14, weight: .medium))
-                    Text("Needed for hold-to-talk (731 MB)")
-                        .font(OnboardTone.caption)
-                        .foregroundStyle(.secondary)
-                    if snap.phase == .failed {
-                        Text("Download failed — try again.")
-                            .font(OnboardTone.caption)
-                            .foregroundStyle(.orange)
-                    } else if snap.phase == .cancelled {
-                        Text("Download cancelled — resume anytime.")
-                            .font(OnboardTone.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                        .foregroundStyle(QuietDesign.Color.accent)
+                    Spacer(minLength: 0)
                 }
-            }
-            Spacer(minLength: 8)
-            // ONE trailing action, never a stack.
-            if modelDownload.isSpeechReady {
-                EmptyView()
+                .frame(maxWidth: 480, alignment: .leading)
+                .accessibilityElement(children: .combine)
             } else if modelDownload.isTransferring {
-                Button("Cancel") { modelDownload.cancel() }
-                    .buttonStyle(QuietSecondaryButtonStyle())
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        QuietIconTile(systemImage: "waveform", side: 34)
+                        Text("Downloading voice support")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Spacer(minLength: 8)
+                        if let fraction = speechProgressFraction {
+                            Text("\(Int((fraction * 100).rounded()))%")
+                                .font(.system(size: 15, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        }
+                    }
+                    ProgressView(value: speechProgressFraction ?? 0)
+                        .tint(QuietDesign.Color.primaryFill)
+                    Text("You can finish setup while this downloads.")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    Button("Cancel download") { modelDownload.cancel() }
+                        .buttonStyle(QuietTextButtonStyle())
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityLabel("Cancel voice model download")
+                }
+                .padding(14)
+                .frame(maxWidth: 480)
+                .background(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .fill(QuietDesign.Color.card(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
+                )
+                .accessibilityElement(children: .combine)
             } else {
-                Button("Download") { modelDownload.startSpeechInstall() }
-                    .buttonStyle(QuietPrimaryButtonStyle())
+                HStack(alignment: .center, spacing: 12) {
+                    QuietIconTile(systemImage: "waveform", side: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Voice model")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text("Needed for hold-to-talk (731 MB)")
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        if snap.phase == .failed {
+                            Text("Download failed — try again.")
+                                .font(QuietDesign.Typography.caption)
+                                .foregroundStyle(QuietDesign.Color.warning)
+                        } else if snap.phase == .cancelled {
+                            Text("Download cancelled — resume anytime.")
+                                .font(QuietDesign.Typography.caption)
+                                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Button("Download") { modelDownload.startSpeechInstall() }
+                        .buttonStyle(QuietPrimaryButtonStyle())
+                }
+                .padding(14)
+                .frame(maxWidth: 480)
+                .background(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .fill(QuietDesign.Color.card(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
+                )
+                .accessibilityElement(children: .combine)
             }
         }
-        .frame(maxWidth: 480, alignment: .leading)
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(voiceModelAccessibilityLabel)
         .onAppear { modelDownload.refresh() }
     }
 
@@ -1482,10 +1742,14 @@ struct OnboardingView: View {
                     .buttonStyle(QuietSecondaryButtonStyle())
                 }
                 .frame(maxWidth: 480, alignment: .leading)
-                .padding(8)
+                .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.primary.opacity(0.05))
+                        .fill(QuietDesign.Color.card(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
                 )
                 #if DEBUG
                 if qaAXTrusted {
@@ -1496,7 +1760,7 @@ struct OnboardingView: View {
                 // UNTRUSTED default: ONE concise permission row + the two
                 // actions, visible above the footer. The 3-step guide and
                 // drag tile are under the optional disclosure.
-                HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "hand.raised")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
@@ -1506,10 +1770,18 @@ struct OnboardingView: View {
                         Text("Accessibility")
                             .font(.system(size: 14, weight: .semibold))
                         Text("One permission in System Settings.")
-                            .font(OnboardTone.caption)
+                            .font(.system(size: 11, weight: .regular))
                             .foregroundStyle(.secondary)
+                            // One line, never wrapped, never ellipsized:
+                            // at 640×600 the two action buttons take
+                            // precedence and the copy scales within
+                            // itself rather than clipping
+                            // ("System Settings…") or pushing the practice
+                            // card below the fold.
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 6)
                     Button(AccessibilityDragGuideCopy.openSettings) {
                         // Opens the pane only — no prompt, no grant.
                         holdToTalk.openAccessibilitySettings()
@@ -1533,10 +1805,14 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: true, vertical: false)
                 }
                 .frame(maxWidth: 480, alignment: .leading)
-                .padding(8)
+                .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.primary.opacity(0.05))
+                        .fill(QuietDesign.Color.card(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
                 )
                 // 2026-11-07 Accessibility mismatch evidence (owner
                 // screenshot): the System Settings switch was ON while
@@ -1625,114 +1901,310 @@ struct OnboardingView: View {
         }
     }
 
+    /// 2026-11-12 approved design (welcome-light/dark.png): app mark,
+    /// two-line SF Pro display, short supporting line, the real
+    /// hold → speak → review affordance row naming the ACTUAL selected
+    /// shortcut, and the quiet menu-bar footnote.
     private var welcomeScene: some View {
-        // 0.3.13 (design 6:14 / 7:251, owner-approved REV2.1): short
-        // what/how only. The interactive demo (text field, sample card,
-        // chip, hint) is REMOVED per the owner rule — no try-it content on
-        // Welcome. Practice (step 6) keeps the real parse-only preview.
-        VStack(spacing: 16) {
-            Text(OnboardingVoiceVisualPolicy.WelcomeCopy.brand)
-                .font(OnboardTone.brand)
-                .multilineTextAlignment(.center)
-            Text(OnboardingVoiceVisualPolicy.WelcomeCopy.headline)
-                .font(OnboardTone.body)
-                .foregroundStyle(.primary.opacity(0.9))
-                .multilineTextAlignment(.center)
-            Text(OnboardingVoiceVisualPolicy.WelcomeCopy.how)
-                .font(OnboardTone.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        VStack(spacing: 20) {
+            QuietAppMark(side: 72)
+            VStack(spacing: 12) {
+                Text("Your calendar.\nA little more effortless.")
+                    .font(QuietDesign.Typography.display)
+                    .fontWeight(.bold)
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                Text("Speak naturally. Review the details.\nAdd an event without breaking your flow.")
+                    .font(QuietDesign.Typography.subtitle)
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
+            HStack(spacing: 14) {
+                QuietKeyCap(
+                    keyLabel: shortcutSelection.shortName,
+                    state: .neutral,
+                    reduceMotion: reduceMotion,
+                    size: .small
+                )
+                Text("Hold")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11))
+                    .foregroundStyle(QuietDesign.Color.labelTertiary(colorScheme))
+                Image(systemName: "mic")
+                    .font(.system(size: 13))
+                    .foregroundStyle(QuietDesign.Color.primaryFill)
+                Text("Speak")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11))
+                    .foregroundStyle(QuietDesign.Color.labelTertiary(colorScheme))
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(QuietDesign.Color.primaryFill)
+                Text("Review")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+            }
+            Label("Quietly at home in your menu bar.", systemImage: "menubar.rectangle")
+                .font(QuietDesign.Typography.caption)
+                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                .labelStyle(.titleAndIcon)
         }
         .frame(maxWidth: 460)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.horizontal, 32)
     }
 
+    /// 2026-11-12 approved design: ONE state-driven calendar surface.
+    /// The stage is the LIVE destination selection plus the real
+    /// EventKit / Google state — choosing → connected → connected-with-
+    /// picker, or the honest failure card. EventKit/Google permission
+    /// requests happen ONLY from explicit actions here (the primary
+    /// button or the in-scene sign-in button), never at launch.
     private var calendarScene: some View {
-        VStack(spacing: 20) {
-            sceneTitle("Calendar", subtitle: "Choose where confirmed events go.")
-            VStack(spacing: 8) {
-                // Mac calendars row (selected by default, connected via EventKit)
-                Button {
-                    selectDestination(.eventKit)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 16))
-                            .foregroundStyle(OnboardTone.accent)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(OnboardTone.accent.opacity(0.12)))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Mac calendars")
-                                .font(.system(size: 14, weight: .medium))
-                            Text("Accounts already on this Mac")
-                                .font(OnboardTone.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
+            switch calendarStage {
+            case .choosing:
+                sceneTitle(
+                    "Choose your calendar",
+                    subtitle: "Pick where QuikCal should add your events.\nYou can change this anytime in Settings.",
+                    alignment: .leading
+                )
+                VStack(spacing: 10) {
+                    calendarOptionRow(
+                        symbol: "calendar",
+                        title: "Mac calendars",
+                        subtitle: "Use the accounts already on this Mac.",
+                        selected: destinationKind == .eventKit
+                    ) { selectDestination(.eventKit) }
+                    calendarOptionRow(
+                        symbol: "globe",
+                        title: "Google Calendar",
+                        subtitle: "Connect your Google account.",
+                        selected: destinationKind == .google
+                    ) { selectDestination(.google) }
+                }
+                .frame(maxWidth: 480)
+                shieldNote("You review every event before it is added.")
+            case .macConnected:
+                sceneTitle(
+                    "Your calendar is connected.",
+                    subtitle: "New events will be added to the default\ncalendar on your Mac after you confirm.",
+                    alignment: .leading
+                )
+                QuietCard(padding: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            QuietIconTile(systemImage: "calendar", side: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Mac calendars")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                                Text("Uses the accounts on this Mac")
+                                    .font(QuietDesign.Typography.caption)
+                                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                            }
+                            Spacer(minLength: 8)
+                            QuietStatusChip(text: "Connected", tone: .success)
                         }
-                        Spacer()
-                        if destinationKind == .eventKit {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(OnboardTone.accent)
+                        Rectangle()
+                            .fill(QuietDesign.Color.separator(colorScheme))
+                            .frame(height: 1)
+                        HStack(spacing: 12) {
+                            Text("Default calendar")
+                                .font(.system(size: 13))
+                                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                            Spacer(minLength: 8)
+                            Text(selectedEventKitCalendarName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                                .lineLimit(1)
                         }
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(destinationKind == .eventKit ? 0.06 : 0.03)))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(destinationKind == .eventKit ? 0.15 : 0.06), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(destinationKind == .eventKit ? .isSelected : [])
-                // Google row (real destination — sign-in + confirmed Add)
-                Button {
-                    selectDestination(.google)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "g.circle")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Color.primary.opacity(0.05)))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Google")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                            Text(OnboardingGoogleCopy.subtitle)
-                                .font(OnboardTone.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if destinationKind == .google {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(OnboardTone.accent)
-                        }
-                    }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(destinationKind == .google ? 0.06 : 0.03)))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(destinationKind == .google ? 0.15 : 0.06), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(destinationKind == .google ? .isSelected : [])
-            }
-            .frame(maxWidth: 480)
-            // 2026-11-07 owner requirement: smooth ~180–250 ms crossfade
-            // when switching Mac calendars ↔ Google. Both lanes stay in
-            // the hierarchy so the height is STABLE (no jump/flicker);
-            // the unselected lane is invisible, NON-INTERACTIVE and
-            // accessibility-hidden from the instant the switch lands (no
-            // focus left on the outgoing lane, no double submit). The
-            // preference updates IMMEDIATELY — the animation is purely
-            // visual and Reduce Motion gets an instant switch.
-            ZStack(alignment: .top) {
+                .frame(maxWidth: 480)
+                shieldNote("You stay in control of every event.")
                 eventKitChooser
-                    .opacity(ProviderSwitchMotionPolicy.laneOpacity(isSelected: destinationKind == .eventKit))
-                    .allowsHitTesting(ProviderSwitchMotionPolicy.laneIsInteractive(isSelected: destinationKind == .eventKit))
-                    .accessibilityHidden(!ProviderSwitchMotionPolicy.laneIsAccessibilityVisible(isSelected: destinationKind == .eventKit))
+            case .googleConnect:
+                sceneTitle(
+                    "Connect Google Calendar",
+                    subtitle: "Sign in securely in your browser.\nQuikCal will bring you back here when you're done.",
+                    alignment: .leading
+                )
+                QuietCard(padding: 26) {
+                    VStack(spacing: 10) {
+                        QuietIconTile(systemImage: "globe", side: 56)
+                        Text("Google Calendar")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text("Keep your calendar in sync across devices.")
+                            .font(QuietDesign.Typography.subtitle)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(maxWidth: 480)
+                HStack(spacing: 6) {
+                    Image(systemName: "lock")
+                        .font(.system(size: 11))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    Text("Your Google password is never shared with QuikCal.")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                }
+                .frame(maxWidth: 480, alignment: .leading)
                 googleChooser
-                    .opacity(ProviderSwitchMotionPolicy.laneOpacity(isSelected: destinationKind == .google))
-                    .allowsHitTesting(ProviderSwitchMotionPolicy.laneIsInteractive(isSelected: destinationKind == .google))
-                    .accessibilityHidden(!ProviderSwitchMotionPolicy.laneIsAccessibilityVisible(isSelected: destinationKind == .google))
+            case .googleConnected:
+                sceneTitle(
+                    "Choose a Google calendar",
+                    subtitle: "Choose which calendar should receive new events.",
+                    alignment: .leading
+                )
+                QuietCard(padding: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            QuietIconTile(systemImage: "globe", side: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Google Calendar")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                                Text(googleAuth.activeAccount?.email ?? "Account connected")
+                                    .font(QuietDesign.Typography.caption)
+                                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 8)
+                            QuietStatusChip(text: "Connected", tone: .success)
+                        }
+                        Rectangle()
+                            .fill(QuietDesign.Color.separator(colorScheme))
+                            .frame(height: 1)
+                        GoogleDestinationPicker(googleAuth: googleAuth)
+                        if let account = googleAuth.activeAccount {
+                            Button("Disconnect…") {
+                                googleAuth.disconnect(accountID: account.id)
+                            }
+                            .buttonStyle(QuietTextButtonStyle())
+                            .accessibilityLabel("Disconnect Google account \(account.email)")
+                        }
+                    }
+                }
+                .frame(maxWidth: 480)
+                Label("You can change this in Settings.", systemImage: "gearshape")
+                    .font(QuietDesign.Typography.caption)
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            case .error:
+                sceneTitle(
+                    "Let's try that again.",
+                    subtitle: "Your calendar connection wasn't completed.\nTry again, or choose a different calendar.",
+                    alignment: .leading
+                )
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(QuietDesign.Color.warning)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Calendar isn't connected yet")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                            Text("No events have been added. You can safely reconnect.")
+                                .font(QuietDesign.Typography.caption)
+                                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                                .fixedSize(horizontal: false, vertical: true)
+                            if destinationKind != .google, vm.accessPhase == .denied {
+                                Text("Enable Calendar access in System Settings → Privacy & Security → Calendars.")
+                                    .font(QuietDesign.Typography.caption)
+                                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if destinationKind == .google, let status = googleAuth.statusMessage {
+                                Text(status)
+                                    .font(QuietDesign.Typography.caption)
+                                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: 480, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .fill(QuietDesign.Color.warningFill(colorScheme))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: QuietDesign.Metric.cardCorner, style: .continuous)
+                        .strokeBorder(QuietDesign.Color.warningStroke(colorScheme), lineWidth: 1)
+                )
+                Button("Choose another calendar") {
+                    selectDestination(destinationKind == .google ? .eventKit : .google)
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                .buttonStyle(.plain)
+                .frame(maxWidth: 480)
             }
-            .frame(maxWidth: 480)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(.horizontal, 32)
+        .padding(.horizontal, 4)
+    }
+
+    /// One destination choice card (icon tile, copy, selection state).
+    private func calendarOptionRow(
+        symbol: String,
+        title: String,
+        subtitle: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            QuietCard(selected: selected, padding: 12) {
+                HStack(spacing: 12) {
+                    QuietIconTile(systemImage: symbol, side: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Text(subtitle)
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                    Spacer(minLength: 8)
+                    if selected {
+                        QuietSelectionMark()
+                    } else {
+                        Circle()
+                            .strokeBorder(QuietDesign.Color.labelTertiary(colorScheme), lineWidth: 1.5)
+                            .frame(width: 22, height: 22)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel("\(title), \(subtitle)\(selected ? ", selected" : "")")
+    }
+
+    /// "Default calendar" value for the connected card — the REAL selected
+    /// writable calendar when EventKit granted one, else the honest
+    /// "System default" fallback.
+    private var selectedEventKitCalendarName: String {
+        vm.selectionState.choice?.displayName ?? "System default"
+    }
+
+    /// Shield-check reassurance line (Every review-before-add screen).
+    private func shieldNote(_ text: String) -> some View {
+        Label(text, systemImage: "checkmark.shield")
+            .font(QuietDesign.Typography.caption)
+            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            .labelStyle(.titleAndIcon)
+            .frame(maxWidth: 480, alignment: .leading)
     }
 
     /// Destination switch (2026-11-07): the preference and the local
@@ -2148,54 +2620,175 @@ struct OnboardingView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    /// Ready-page variants, derived ONLY from live state — the approved
+    /// design ships all three (all-set / download-in-background /
+    /// typing-only), and each names the real readiness of THIS Mac.
+    private enum ReadyVariant {
+        /// Voice model on disk and voice not skipped — the full promise.
+        case allSet
+        /// Voice model still transferring — typing works right now.
+        case downloading
+        /// Voice deferred/not downloaded — typing is the ready path.
+        case typing
+    }
+
+    private var readyVariant: ReadyVariant {
+        if modelDownload.isSpeechReady && !session.skipped.contains(.voiceSetup) {
+            return .allSet
+        }
+        if modelDownload.isTransferring {
+            return .downloading
+        }
+        return .typing
+    }
+
     private var completionScene: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 8) {
-                Text("You're ready")
-                    .font(OnboardTone.display)
-                // 2026-11-07 parent fix: ONE short instruction naming the
-                // ACTUAL selected hold key — no decorative fake entry bar,
-                // no "Experimental AI" chip (owner-banned), no filler chip
-                // row. Typing is always available and needs no badge.
-                Text(OnboardingCompletionCopy.instruction(
-                    voiceSetupSkipped: session.skipped.contains(.voiceSetup),
-                    shortcutName: shortcutSelection.displayName
-                ))
-                    .font(OnboardTone.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-            }
-            // Truthful readiness summary ONLY when something is genuinely
-            // speech not ready (transferring/pending) — skipped-state
-            // honesty without filler. Finish setup stays in the footer;
-            // no prefs are touched here.
-            if let summary = OnboardingCompletionCopy.readinessSummary(
-                isTransferring: modelDownload.isTransferring,
-                speechModelReady: modelDownload.isSpeechReady
-            ) {
-                Text(summary)
-                    .font(OnboardTone.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+        VStack(spacing: 22) {
+            switch readyVariant {
+            case .allSet:
+                ZStack {
+                    Circle()
+                        .fill(QuietDesign.Color.selectedFill(colorScheme))
+                        .frame(width: 72, height: 72)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Color.primaryFill)
+                }
+                VStack(spacing: 10) {
+                    Text("You're all set.")
+                        .font(QuietDesign.Typography.title)
+                        .fontWeight(.bold)
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    Text("QuikCal lives in your menu bar.\nHold \(shortcutSelection.shortName) whenever you need to add an event.")
+                        .font(QuietDesign.Typography.subtitle)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+                readySummaryCard(voiceValue: "Ready on this Mac", voiceSage: true)
+            case .downloading:
+                QuietIconTile(systemImage: "waveform", side: 64)
+                VStack(spacing: 10) {
+                    Text("Ready when you are.")
+                        .font(QuietDesign.Typography.title)
+                        .fontWeight(.bold)
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    Text("Start with typing while voice support downloads.\nQuikCal will let you know when voice is ready.")
+                        .font(QuietDesign.Typography.subtitle)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+                QuietCard(padding: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            QuietIconTile(systemImage: "waveform", side: 28)
+                            Text("Voice support is downloading")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                            Spacer(minLength: 8)
+                            if let fraction = speechProgressFraction {
+                                Text("\(Int((fraction * 100).rounded()))%")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                            }
+                        }
+                        ProgressView(value: speechProgressFraction ?? 0)
+                            .tint(QuietDesign.Color.primaryFill)
+                        Text("No need to keep this window open.")
+                            .font(QuietDesign.Typography.caption)
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                }
+                .frame(maxWidth: 440)
+            case .typing:
+                QuietIconTile(systemImage: "menubar.rectangle", side: 64)
+                VStack(spacing: 10) {
+                    Text("You're ready to type.")
+                        .font(QuietDesign.Typography.title)
+                        .fontWeight(.bold)
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    Text("Open QuikCal from your menu bar.\nYou can enable voice anytime in Settings.")
+                        .font(QuietDesign.Typography.subtitle)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+                readySummaryCard(voiceValue: "Set up later", voiceSage: false, inputRow: true)
             }
         }
+        .frame(maxWidth: 480)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.horizontal, 32)
     }
 
+    /// The Ready summary card — Calendar / Shortcut (or Input) / Voice
+    /// rows, values in the primary label color, voice value sage ONLY
+    /// when genuinely ready.
+    private func readySummaryCard(
+        voiceValue: String,
+        voiceSage: Bool,
+        inputRow: Bool = false
+    ) -> some View {
+        QuietCard(padding: 16) {
+            VStack(spacing: 12) {
+                readySummaryRow(
+                    label: "Calendar",
+                    value: destinationKind == .google ? "Google Calendar" : "Mac calendars",
+                    sage: false
+                )
+                Rectangle()
+                    .fill(QuietDesign.Color.separator(colorScheme))
+                    .frame(height: 1)
+                readySummaryRow(
+                    label: inputRow ? "Input" : "Shortcut",
+                    value: inputRow ? "Typing" : "Hold \(shortcutSelection.shortName)",
+                    sage: false
+                )
+                Rectangle()
+                    .fill(QuietDesign.Color.separator(colorScheme))
+                    .frame(height: 1)
+                readySummaryRow(label: "Voice", value: voiceValue, sage: voiceSage)
+            }
+        }
+        .frame(maxWidth: 440)
+    }
+
+    private func readySummaryRow(label: String, value: String, sage: Bool) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(sage
+                                 ? QuietDesign.Color.accent
+                                 : QuietDesign.Color.labelPrimary(colorScheme))
+        }
+    }
+
     // MARK: Shared pieces
 
-    private func sceneTitle(_ title: String, subtitle: String) -> some View {
-        VStack(spacing: 8) {
+    private func sceneTitle(
+        _ title: String,
+        subtitle: String,
+        alignment: HorizontalAlignment = .center
+    ) -> some View {
+        VStack(spacing: 6) {
             Text(title)
                 .font(OnboardTone.display)
-                .multilineTextAlignment(.center)
+                .fontWeight(.bold)
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                .multilineTextAlignment(alignment == .leading ? .leading : .center)
+                .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
             Text(subtitle)
-                .font(OnboardTone.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+                .font(OnboardTone.subtitle)
+                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                .multilineTextAlignment(alignment == .leading ? .leading : .center)
+                .frame(maxWidth: 440, alignment: alignment == .leading ? .leading : .center)
+                .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
         }
     }
 
@@ -2213,64 +2806,76 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder
+    /// EventKit detail BELOW the connected card (full access only): the
+    /// writable-calendar choice. Under write-only, listing is impossible
+    /// — the honest line explains where events go instead. The not-
+    /// determined path never renders (the choosing stage offers the
+    /// primary action instead) and the denied path is rendered by the
+    /// error stage, so this view is only reached when connected.
     private var eventKitChooser: some View {
         switch vm.accessPhase {
         case .granted, .writeOnly:
-            // 2026-11-07 owner correction: write-only is CONNECTED — the
-            // writable list is the default calendar (or the full set under
-            // full access). The UI never demands full access just to show
-            // the connection.
-            if vm.accessPhase == .writeOnly {
-                Text("Connected — events go to your default calendar. Full Access additionally enables browsing calendars and voice delete.")
-                    .font(OnboardTone.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 480, alignment: .leading)
-            }
-            if vm.calendarChoices.isEmpty {
-                Text("No writable calendars found.")
-                    .font(OnboardTone.caption)
-                    .foregroundStyle(.orange)
-            } else {
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(vm.calendarChoices) { choice in
-                            Button {
-                                vm.selectCalendar(choice)
-                            } label: {
-                                HStack {
-                                    Text(choice.displayName)
-                                        .font(OnboardTone.body)
-                                    Spacer()
-                                    if vm.selectionState.choice?.id == choice.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(OnboardTone.accent)
+            VStack(alignment: .leading, spacing: 8) {
+                if vm.accessPhase == .writeOnly {
+                    Text("Connected — events go to your default calendar. Full Access additionally enables browsing calendars and voice delete.")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 480, alignment: .leading)
+                } else if vm.calendarChoices.isEmpty {
+                    Text("No writable calendars found.")
+                        .font(QuietDesign.Typography.caption)
+                        .foregroundStyle(QuietDesign.Color.warning)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach(vm.calendarChoices) { choice in
+                                Button {
+                                    vm.selectCalendar(choice)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Text(choice.displayName)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                                        Spacer(minLength: 8)
+                                        if vm.selectionState.choice?.id == choice.id {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(QuietDesign.Color.accent)
+                                        }
                                     }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(QuietDesign.Color.card(colorScheme))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(QuietDesign.Color.cardStroke(colorScheme), lineWidth: 1)
+                                    )
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.primary.opacity(0.05))
-                                )
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(vm.selectionState.choice?.id == choice.id ? .isSelected : [])
                             }
-                            .buttonStyle(.plain)
                         }
                     }
+                    .frame(maxHeight: 160)
                 }
             }
         case .denied:
             Text("Calendar access denied. Enable it in System Settings → Privacy & Security → Calendars.")
-                .font(OnboardTone.caption)
-                .foregroundStyle(.orange)
+                .font(QuietDesign.Typography.caption)
+                .foregroundStyle(QuietDesign.Color.warning)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 480)
         default:
             VStack(spacing: 8) {
                 Button("Connect calendar") { vm.requestCalendarAccess() }
                     .buttonStyle(QuietPrimaryButtonStyle())
                 Text("Asked only when you click — not at launch.")
-                    .font(OnboardTone.caption)
-                    .foregroundStyle(.secondary)
+                    .font(QuietDesign.Typography.caption)
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
             }
         }
     }
@@ -2310,29 +2915,10 @@ struct OnboardingView: View {
                 Button("Cancel") { googleAuth.cancelSignIn() }
                     .buttonStyle(QuietTextButtonStyle())
             case .signedIn:
-                ForEach(googleAuth.directory.accounts) { account in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(account.email)
-                            // Distinct account-connected state — never a
-                            // fake "ready" checkmark from row selection.
-                            Text("Account connected")
-                                .font(OnboardTone.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Disconnect") { googleAuth.disconnect(accountID: account.id) }
-                            .buttonStyle(QuietTextButtonStyle())
-                    }
-                }
-                // 0.3.16 owner clarification: onboarding itself offers the
-                // writable Google list right after sign-in — explicit
-                // selection (never an arbitrary default), honest
-                // loading/failure/empty states, and no auto-advance while
-                // the list is pending. Events are written only when you
-                // confirm an Add.
-                GoogleDestinationPicker(googleAuth: googleAuth)
-                    .frame(maxWidth: 480, alignment: .leading)
+                // The signed-in lane renders inside the "Choose a Google
+                // calendar" destination card (account row + writable
+                // picker) — never a second, duplicate sign-in surface.
+                EmptyView()
             }
             // Tiny muted import link (enabled + focusable; ~44 pt hit
             // target via padding) with its full accessible name. The
@@ -2446,16 +3032,8 @@ struct OnboardingView: View {
 // 0.3.20: `QuietPrimaryButtonStyle` and `QuietSecondaryButtonStyle` moved to
 // the shared design system in `QuietUI.swift` (identical bodies) so the
 // saved/schedule screen uses the SAME onboarding primitives — one
-// implementation, no per-file duplicates. `QuietTextButtonStyle` remains
-// local (onboarding-only).
-
-private struct QuietTextButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary.opacity(configuration.isPressed ? 0.6 : 1))
-    }
-}
+// implementation, no per-file duplicates. `QuietTextButtonStyle` moved
+// there too with the 2026-11-12 token foundation.
 
 // MARK: - 0.3.13 onboarding visual components (design REV2.1)
 
@@ -2463,46 +3041,22 @@ private struct QuietTextButtonStyle: ButtonStyle {
 /// state derives ONLY from the real Accessibility monitor. Held → lifts
 /// and fills red; released → settles neutral; detection unavailable →
 /// honest muted cap. Reduce Motion → no lift, red fill + label only.
+/// Thin wrapper kept for the shared onboarding page contract: the approved
+/// shared keycap lives in QuietUI.swift (`QuietKeyCap`); this preserves the
+/// onboarding file's callsites and the hold-guide layout.
 private struct FnKeyCapView: View {
     var keyLabel: String
     var state: OnboardingVoiceVisualPolicy.PracticeKeyState
     var reduceMotion: Bool
 
-    private static let capRed = Color(red: 0.843, green: 0.0, blue: 0.082) // #d70015
-
     var body: some View {
-        let lift = OnboardingVoiceVisualPolicy.keyLiftOffset(state: state, reduceMotion: reduceMotion)
-        let isRed = OnboardingVoiceVisualPolicy.keyIsRed(state: state)
-        Text(keyLabel)
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(isRed ? .white : (state == .unavailable ? Color.secondary : .primary))
-            .frame(width: 72, height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isRed
-                          ? Self.capRed
-                          : (state == .unavailable
-                             ? OnboardTone.accent.opacity(0.18 * 0.5)
-                             : OnboardTone.accent.opacity(0.18)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(state == .unavailable ? 0.08 : 0.14), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(isRed ? 0.28 : 0), radius: isRed ? 7 : 0, y: isRed ? 7 : 0)
-            .offset(y: lift)
-            .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7), value: state)
-            .accessibilityLabel("Hold-to-talk key \(keyLabel)")
-            .accessibilityValue(accessibilityValue)
-    }
-
-    private var accessibilityValue: String {
-        switch state {
-        case .neutral: return "Waiting for a hold"
-        case .holding: return "Holding"
-        case .released: return "Released"
-        case .unavailable: return "Shortcut detection is not active"
-        }
+        QuietKeyCap(
+            keyLabel: keyLabel,
+            subtitle: "Hold to speak",
+            state: state,
+            reduceMotion: reduceMotion,
+            size: .large
+        )
     }
 }
 

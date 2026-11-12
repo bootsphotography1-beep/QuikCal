@@ -2,23 +2,24 @@ import SwiftUI
 import AppKit
 import QuietCalendarCore
 
-// MARK: - Voice-bar glass (2026-11-07 owner requirement)
+// MARK: - Voice-bar glass (2026-11-07 owner requirement; restyled 2026-11-12)
 //
 // ONE preview, ONE full-size voice bar; the Glass slider applies MATERIAL
 // to the bar BACKGROUND ONLY. Content (text / waveform / icons) is NEVER
-// blurred — the old comparison tiles blurred the whole pill including its
-// letters, which is what the owner saw. Three renderers, honestly chosen:
+// blurred. Three renderers, honestly chosen:
 //
 //   • macOS 26+  → native Liquid Glass (`.glassEffect(.regular, in:)`) —
 //                  the real system material, not an opacity fake.
 //   • macOS 14/15 → NSVisualEffectView capsule (`.hudWindow`,
 //                  behind-window blending) — still a REAL material.
-//   • Reduce Transparency → fully opaque charcoal surface — no material,
-//                  contrast preserved (accessible fallback).
+//   • Reduce Transparency → fully opaque scheme-solid surface — no
+//                  material, contrast preserved (accessible fallback).
 //
-// The charcoal tint OVER the material is what the slider drives: more
-// glass → less tint (never below `VoiceBarGlassPolicy.minTintAlpha`, so
-// light content keeps contrast over any backdrop).
+// 2026-11-12 (approved voice/glass overlay): the surface is now
+// scheme-adaptive — near-white glass in Light, deep green-charcoal in
+// Dark — with a thin inset top highlight (Spotlight rim), a hairline
+// stroke and a soft drop shadow. The slider drives the solid tint OVER the
+// material exactly like before (never below `VoiceBarGlassPolicy.minTintAlpha`).
 
 /// REAL behind-window material fallback for pre-macOS-26 systems:
 /// NSVisualEffectView masked to the bar's capsule. Never opacity-only.
@@ -44,44 +45,72 @@ struct VisualEffectCapsule: NSViewRepresentable {
 }
 
 /// The shared voice-bar BACKGROUND surface (production pill + previews use
-/// the SAME component, so the slider affects the REAL voice bar too).
+/// the SAME component). Scheme-adaptive glass per the approved 2026-11-12
+/// voice/glass design; the Glass slider drives the solid tint over the
+/// real material; Reduce Transparency flattens everything to an opaque
+/// scheme-coordinated solid.
 struct VoiceBarSurface: View {
     var intensity: Double
-    var cornerRadius: CGFloat = 20
+    var cornerRadius: CGFloat = QuietDesign.Voice.Metric.barCorner
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
-
-    /// Charcoal base tone rgb(41,43,46) — the production voice-bar family.
-    static let charcoal = Color(red: 0.161, green: 0.169, blue: 0.180)
-    private static let sage = Color(red: 0.45, green: 0.62, blue: 0.52)
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let tint = reduceTransparency
-            ? VoiceBarGlassPolicy.reduceTransparencyTintAlpha
+        let tintAlpha = reduceTransparency
+            ? 1.0
             : VoiceBarGlassPolicy.tintAlpha(intensity: intensity)
         ZStack {
             if reduceTransparency {
                 // Accessible opaque fallback — no material, full contrast.
-                shape.fill(Self.charcoal.opacity(tint))
+                shape.fill(QuietDesign.Voice.VoiceColor.reduceTransparencyFill(colorScheme))
             } else if #available(macOS 26.0, *) {
                 // NATIVE Liquid Glass base — the real system material.
                 shape
                     .fill(Color.clear)
                     .glassEffect(.regular, in: shape)
                 // The slider's tint sits OVER the glass, BEHIND content.
-                shape.fill(Self.charcoal.opacity(tint))
+                shape.fill(QuietDesign.Voice.VoiceColor.barFill(colorScheme).opacity(tintAlpha))
             } else {
                 // Pre-26: REAL NSVisualEffectView capsule material.
                 VisualEffectCapsule(material: .hudWindow, cornerRadius: cornerRadius)
-                shape.fill(Self.charcoal.opacity(tint))
+                shape.fill(QuietDesign.Voice.VoiceColor.barFill(colorScheme).opacity(tintAlpha))
             }
             shape.strokeBorder(
-                Self.sage.opacity(0.35),
+                contrast == .increased
+                    ? Color.primary.opacity(0.35)
+                    : QuietDesign.Voice.VoiceColor.barStroke(colorScheme),
                 lineWidth: contrast == .increased ? 1.5 : 1
             )
         }
+        .overlay(alignment: .top) {
+            // Thin soft inset highlight along the top edge (the lit rim).
+            // Hidden under Reduce Transparency / Increased Contrast.
+            if !reduceTransparency && contrast != .increased {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [QuietDesign.Voice.VoiceColor.barTopHighlight(colorScheme), .clear],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                    .frame(height: 1.5)
+                    .padding(.horizontal, 10)
+                    .allowsHitTesting(false)
+            }
+        }
+        .shadow(
+            color: .black.opacity(
+                reduceTransparency
+                    ? (colorScheme == .dark ? 0.25 : 0.10)
+                    : (colorScheme == .dark
+                        ? QuietDesign.Voice.Material.shadowDarkOpacity
+                        : QuietDesign.Voice.Material.shadowLightOpacity)),
+            radius: QuietDesign.Voice.Material.shadowRadius,
+            y: QuietDesign.Voice.Material.shadowY
+        )
     }
 }
 
@@ -92,7 +121,7 @@ struct VoiceBarSurface: View {
 /// mirroring the real recording bar's top-center-of-screen placement.
 struct VoiceBarPreviewStage: View {
     var intensity: Double
-    var cornerRadius: CGFloat = 20
+    var cornerRadius: CGFloat = QuietDesign.Voice.Metric.barCorner
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -105,8 +134,8 @@ struct VoiceBarPreviewStage: View {
                 state: .listening(preview: nil, amplitude: 0),
                 glassIntensity: intensity
             )
-                .padding(.top, 22)
-                .shadow(color: .black.opacity(0.25), radius: 12, y: 5)
+            .padding(.top, 22)
+            .shadow(color: .black.opacity(0.25), radius: 12, y: 5)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(

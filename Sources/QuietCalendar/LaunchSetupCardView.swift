@@ -54,7 +54,7 @@ struct LaunchSetupCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 24, weight: .semibold, design: .serif))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(subtitle)
@@ -164,7 +164,7 @@ struct HoldGuideRepairCardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text(HoldGuideRepairCardCopy.title)
-                    .font(.system(size: 24, weight: .semibold, design: .serif))
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.primary)
 #if DEBUG
                 if qaRepairState != nil {

@@ -62,6 +62,11 @@ final class AppViewModel: ObservableObject {
     @Published var parseNote: String?
     @Published var isParsing: Bool = false
     @Published var isSaving: Bool = false
+    /// 2026-11-12 voice/glass review: true only after the LAST Add
+    /// attempt FAILED (EventKit or Google path). Drives the failed-review
+    /// surface ("Try again" + honest error row); the draft is preserved.
+    /// Set false on a new submit and on any non-failure outcome.
+    @Published private(set) var lastSaveFailed = false
     /// After an exact-match warning, a second Add intentionally creates another copy.
     @Published var duplicateAddArmed: Bool = false
     @Published var scheduleDay: Date = Calendar.current.startOfDay(for: Date())
@@ -104,6 +109,15 @@ final class AppViewModel: ObservableObject {
     func qaArmSingleDraftFixtureGate() {
         confirmedAdd.beginNewDraft()
         duplicateAddArmed = false
+    }
+
+    /// DEBUG QA fixture only (2026-11-12 voice/glass pass): render the
+    /// failed-review surface ("Couldn't add the event. Your draft is still
+    /// here." + Try again) without a real write. No sink is armed, no
+    /// calendar is touched — display only. Never compiled into Release.
+    func qaForceSaveFailureForFixture() {
+        lastSaveFailed = true
+        statusMessage = "Couldn't add the event. Your draft is still here."
     }
     #endif
 
@@ -981,6 +995,7 @@ final class AppViewModel: ObservableObject {
         saveGeneration += 1
         let token = saveGeneration
         isSaving = true
+        lastSaveFailed = false
         statusMessage = nil
 
         let start = draftStart
@@ -1009,6 +1024,7 @@ final class AppViewModel: ObservableObject {
         switch outcome {
         case .created(let eventID):
             isSaving = false
+            lastSaveFailed = false
             duplicateAddArmed = false
             scheduleDay = Calendar.current.startOfDay(for: start)
             inputText = ""
@@ -1034,6 +1050,7 @@ final class AppViewModel: ObservableObject {
             onRequestPanelResize?(.daySchedule)
         case .alreadyCommitted:
             isSaving = false
+            lastSaveFailed = false
             statusMessage = "Already added from this confirmation."
             scheduleDay = Calendar.current.startOfDay(for: start)
             reloadScheduleIfPossible()
@@ -1041,10 +1058,12 @@ final class AppViewModel: ObservableObject {
             onRequestPanelResize?(.daySchedule)
         case .exactMatchNeedsConfirmation:
             isSaving = false
+            lastSaveFailed = false
             duplicateAddArmed = true
             statusMessage = "An identical event is already on this calendar. Press Add again to create another copy."
         case .failed(let message):
             isSaving = false
+            lastSaveFailed = true
             refreshSelection()
             if case .missing = selectionState {
                 statusMessage = "That calendar is no longer writable. Choose another calendar."
@@ -1077,6 +1096,7 @@ final class AppViewModel: ObservableObject {
         saveGeneration += 1
         let token = saveGeneration
         isSaving = true
+        lastSaveFailed = false
         statusMessage = nil
 
         let start = draftStart
@@ -1126,12 +1146,15 @@ final class AppViewModel: ObservableObject {
                 self.statusMessage = "An identical event is already on this Google calendar. Press Add again to create another copy."
             case .alreadySaved:
                 self.statusMessage = "Already added from this confirmation."
+                self.lastSaveFailed = false
             case .commitUncertain(let message):
                 self.statusMessage = "Save outcome uncertain (\(message)) — press Add again; an already-saved event will be recognised, not duplicated."
             case .failed(let message):
                 self.statusMessage = "Could not add to Google Calendar: \(message)."
+                self.lastSaveFailed = true
             case .none:
                 self.statusMessage = "Could not add to Google Calendar."
+                self.lastSaveFailed = true
             }
         }
     }
@@ -1152,6 +1175,7 @@ final class AppViewModel: ObservableObject {
         saveGeneration += 1
         let token = saveGeneration
         isSaving = true; statusMessage = nil
+        lastSaveFailed = false
         let drafts = confirmationDrafts
         let summary = context.calendarSummary
 
@@ -1198,6 +1222,7 @@ final class AppViewModel: ObservableObject {
                 self.onAfterSuccessfulAdd?()
             } else if !failures.isEmpty {
                 self.statusMessage = failures.joined(separator: " ")
+                self.lastSaveFailed = true
             }
         }
     }
@@ -1227,6 +1252,7 @@ final class AppViewModel: ObservableObject {
         saveGeneration += 1
         let token = saveGeneration
         isSaving = true; statusMessage = nil
+        lastSaveFailed = false
         let result = WriteCoordinator().write(
             drafts: confirmationDrafts, calendarID: calendarID,
             calendarSummary: selectionState.choice?.title, sink: calendarService)
@@ -1268,6 +1294,7 @@ final class AppViewModel: ObservableObject {
             onAfterSuccessfulAdd?()
         } else if !failures.isEmpty {
             statusMessage = failures.joined(separator: " ")
+            lastSaveFailed = true
         }
     }
 

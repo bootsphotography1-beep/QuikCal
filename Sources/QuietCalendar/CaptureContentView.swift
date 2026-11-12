@@ -23,12 +23,36 @@ struct CaptureContentView: View {
 
     /// Capture state renders as the single capsule (full-bleed glass); every
     /// other state keeps the padded review-card chrome.
-    private var isNoteCapsule: Bool { vm.screen == .note }
+    private var isNoteCapsule: Bool {
+        vm.screen == .note && vm.holdOutcome != .nothingRecorded
+    }
+
+    /// 2026-11-12 voice/glass: in-place edit mode for the single-draft
+    /// review ("Edit details" → the Edit event details surface; edits the
+    /// SAME draft; Done returns to review — it never adds the event).
+    @State private var voiceEditMode = false
+    /// Transient just-saved receipt bar over the schedule surface (the
+    /// approved ~1.6 s hold → 140 ms fade + Y 0 → −8 dismiss). Renders ONLY
+    /// from confirmed persisted receipts.
+    @State private var receiptHoldVisible = false
+
+    #if DEBUG
+    /// DEBUG-only: the note-screen QA fixtures are captured from the
+    /// offscreen fixture window. Render the capsule at its intrinsic
+    /// content height (the way the real panel always presents it) instead
+    /// of stretching the capsule clip across the fixed fixture window.
+    /// Never compiled into Release.
+    private var qaTightNoteCapture: Bool {
+        ProcessInfo.processInfo.arguments.contains("--qc-qa-note-state")
+    }
+    #else
+    private var qaTightNoteCapture: Bool { false }
+    #endif
 
     var body: some View {
         content
             .padding(isNoteCapsule ? 0 : 14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: qaTightNoteCapture ? nil : .infinity, alignment: .top)
             .background {
                 if isNoteCapsule {
                     SpotlightCapsuleBackground(intensity: effectiveGlass)
@@ -39,7 +63,7 @@ struct CaptureContentView: View {
             .clipShape(
                 isNoteCapsule
                     ? AnyShape(Capsule())
-                    : AnyShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    : AnyShape(RoundedRectangle(cornerRadius: QuietDesign.Voice.Metric.cardCorner, style: .continuous))
             )
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: vm.presentationPhase)
             .onChange(of: vm.presentationPhase) { _, phase in
@@ -50,6 +74,7 @@ struct CaptureContentView: View {
                 inputFocused = true
             }
             .onAppear {
+                applyQADisplayOverridesIfRequested()
                 if vm.screen == .note {
                     inputFocused = true
                 }
@@ -58,11 +83,73 @@ struct CaptureContentView: View {
             .onChange(of: measuredSingleLineHeight) { _, _ in requestBarHeight() }
             .onChange(of: measuredInputHeight) { _, _ in requestBarHeight() }
             .onChange(of: statusSignature) { _, _ in requestBarHeight() }
+            .onChange(of: vm.holdOutcome) { _, _ in requestBarHeight() }
     }
 
     private var effectiveGlass: Double {
         // Reduce Transparency handled inside GlassBackground; intensity still stored.
         glassIntensity
+    }
+
+    #if DEBUG
+    /// DEBUG-only QA fixture flags (2026-11-12): let the isolated QA host
+    /// render specific approved-design fixtures in the capture panel for
+    /// screenshots. Never compiled into Release; the fixtures fail closed
+    /// (no sink, no write) exactly like the existing QA fixtures, and the
+    /// in-frame orange label renders for each.
+    private var qaReceiptPreviewOnly: Bool {
+        ProcessInfo.processInfo.arguments.contains("--qc-qa-receipt-preview")
+    }
+
+    private func applyQADisplayOverridesIfRequested() {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--qc-qa-edit-mode") { voiceEditMode = true }
+        if args.contains("--qc-qa-clarify") {
+            vm.clarification = "Morning or evening?"
+            vm.ampmCandidates = ["7:00 AM", "7:00 PM"]
+            vm.qaDeleteFixtureActive = true
+        }
+        if args.contains("--qc-qa-empty") {
+            vm.holdOutcome = .nothingRecorded
+            vm.statusMessage = nil
+            vm.qaDeleteFixtureActive = true
+        }
+        if args.contains("--qc-qa-saving-state") {
+            vm.isSaving = true
+            vm.qaDeleteFixtureActive = true
+        }
+        if args.contains("--qc-qa-failed-state") {
+            vm.qaForceSaveFailureForFixture()
+            vm.qaDeleteFixtureActive = true
+        }
+        if args.contains("--qc-qa-receipt-preview") {
+            vm.qaDeleteFixtureActive = true
+        }
+    }
+    #else
+    private var qaReceiptPreviewOnly: Bool { false }
+    private func applyQADisplayOverridesIfRequested() {}
+    #endif
+
+    /// Calendar name for the saving/receipt surfaces WITHOUT the account
+    /// email — only the calendar title the user sees in their provider.
+    private var saveTargetCalendarName: String {
+        switch vm.prefs.calendarDestinationKind {
+        case .eventKit:
+            return vm.selectedCalendarTitle
+        case .google:
+            return googleAuth.activeAccount?.targetCalendarSummary ?? "Google Calendar"
+        }
+    }
+
+    /// Signature of the confirmed receipts currently on screen (drives the
+    /// just-saved receipt hold exactly once per save generation).
+    private var savedReceiptSignature: String {
+        vm.savedReceipts.map(\.eventID).joined(separator: "|")
+    }
+
+    private func shortReceiptDetail(_ receipt: SavedEventReceipt) -> String {
+        ConfirmationReviewFormat.dateTimeLine(start: receipt.start, end: receipt.end)
     }
 
     @ViewBuilder
@@ -121,7 +208,15 @@ struct CaptureContentView: View {
     /// Final capsule height, clamped to the available screen height so
     /// growth never leaves the display.
     private var effectiveBarHeight: CGFloat {
-        CaptureBarSizingPolicy.clampedHeight(
+        if vm.screen == .note && vm.holdOutcome == .nothingRecorded {
+            // The approved empty state needs room for its two explicit
+            // actions — never a clipped capsule.
+            return CaptureBarSizingPolicy.clampedHeight(
+                requested: 148,
+                availableHeight: vm.barAvailableHeight
+            )
+        }
+        return CaptureBarSizingPolicy.clampedHeight(
             requested: requestedBarHeight,
             availableHeight: vm.barAvailableHeight
         )
@@ -148,17 +243,79 @@ struct CaptureContentView: View {
 
     private var noteCapsule: some View {
         VStack(spacing: 0) {
-            inputRow
-                .frame(height: inputRowHeight)
-            if let status = statusLine {
-                statusStrip(status)
-            }
-            if showsAMPMChips {
-                ampmChipStrip
+            #if DEBUG
+            qaFixtureLabel
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+            #endif
+            if vm.holdOutcome == .nothingRecorded {
+                // Approved "empty / no speech" state — an empty or very
+                // short hold never produces a draft. Honest retry paths:
+                // hold again, or type instead. Explicit actions only.
+                emptyCaptureCard
+            } else {
+                inputRow
+                    .frame(height: inputRowHeight)
+                if let status = statusLine {
+                    statusStrip(status)
+                }
+                if showsAMPMChips {
+                    ampmChipStrip
+                }
             }
             Spacer(minLength: 0)
+                .frame(maxHeight: qaTightNoteCapture ? 0 : .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: qaTightNoteCapture ? nil : .infinity, alignment: .top)
+    }
+
+    /// The approved empty state: "I didn't catch that." — an explicit
+    /// recovery choice (hold again, or type). Renders only after a hold
+    /// produced NOTHING (`HoldOutcome.nothingRecorded`) — never as a
+    /// stand-in for a draft or a parse result.
+    private var emptyCaptureCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(QuietDesign.Voice.VoiceColor.micLiveTint(colorScheme))
+                        .frame(width: QuietDesign.Voice.Metric.micCircle,
+                               height: QuietDesign.Voice.Metric.micCircle)
+                    Image(systemName: "mic.slash.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Voice.VoiceColor.micLiveGlyph(colorScheme))
+                }
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("I didn't catch that.")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    Text(HoldOutcomeCopy.nothingRecordedRetryCopy)
+                        .font(.system(size: 11))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+            }
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("Dismiss") {
+                    vm.holdOutcome = nil
+                    vm.statusMessage = nil
+                }
+                .buttonStyle(QuietSecondaryButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                Button("Type instead") {
+                    vm.holdOutcome = nil
+                    vm.statusMessage = nil
+                    inputFocused = true
+                }
+                .buttonStyle(QuietPrimaryButtonStyle())
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 
     /// Real am/pm candidates from the resolver, rendered as chips under the
@@ -179,7 +336,7 @@ struct CaptureContentView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 44)
         .frame(height: CaptureBarSizingPolicy.chipStripHeight)
         .disabled(vm.isParsing || vm.isSaving)
         .accessibilityLabel("Start time choices")
@@ -201,6 +358,7 @@ struct CaptureContentView: View {
             trailingControls
         }
         .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var inputField: some View {
@@ -211,6 +369,7 @@ struct CaptureContentView: View {
             .focused($inputFocused)
             .onChange(of: vm.inputText) { _, _ in vm.inputChanged() }
             .disabled(vm.isParsing || vm.isSaving)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(alignment: .leading) { inputMeasurer }
             .accessibilityLabel("Event note")
     }
@@ -349,168 +508,368 @@ struct CaptureContentView: View {
         }
     }
 
-    // MARK: Confirm (P1: explicit Yes/No, onboarding tokens; 2026-11-07
-    // review pass — default REVIEW CARD, not a form-first material slab)
+    // MARK: Confirm — the approved 2026-11-12 voice/glass review surface
+    //
+    // ONE readable review card: header row (sage calendar tile + the plain
+    // question) + X close (non-mutating, same as Cancel), the event title,
+    // full date/time, location, reminder rows, a compact destination pill,
+    // "Edit details" (in-place edit of the SAME draft), a divider, and the
+    // pinned footer: Cancel · "Nothing added yet" · "Add event".
+    // Saving swaps the whole card for the compact glass saving bar; only a
+    // CONFIRMED persisted write produces receipts (rendered on the schedule
+    // surface + the transient receipt bar — never a pre-save preview).
 
-    /// Destination line for the review card (0.3.21: the bar itself no
-    /// longer shows the account email — only this expanded review surface
-    /// names the destination, where the user actually confirms the write).
+    /// Destination for the review pill + saving/receipt bars — the calendar
+    /// title only, never the account email.
     private var destinationLabel: String {
         switch vm.prefs.calendarDestinationKind {
         case .eventKit:
             return vm.selectedCalendarTitle
         case .google:
-            if let account = googleAuth.activeAccount {
-                return "Google · \(account.email)"
+            if let summary = googleAuth.activeAccount?.targetCalendarSummary, !summary.isEmpty {
+                return "\(summary) · Google Calendar"
             }
-            return "Google · not signed in"
+            return "Google Calendar"
         }
     }
 
-    /// Shared design tokens (onboarding REV2.1): soft sage accent, deep
-    /// sage #4e7a62 primary fill, continuous radii 16/12.
-    private enum ConfirmTone {
-        static let accent = Color(red: 0.45, green: 0.62, blue: 0.52)
-        static let primaryFill = Color(red: 0.306, green: 0.478, blue: 0.384)
+    private var confirmBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            qaFixtureLabel
+            if qaReceiptPreviewOnly {
+                #if DEBUG
+                // Synthetic QA receipt preview — no write occurred.
+                VStack(spacing: 12) {
+                    Spacer(minLength: 8)
+                    VoiceReceiptBar(
+                        calendarName: "Personal",
+                        title: "Lunch with Alex",
+                        detail: "Tomorrow · 12:00–1:00 PM"
+                    )
+                    .frame(maxWidth: 400)
+                    Spacer(minLength: 8)
+                }
+                .frame(maxWidth: .infinity)
+                #endif
+            } else if vm.isSaving {
+                savingStage
+            } else if voiceEditMode {
+                editingStage
+            } else {
+                reviewStage
+            }
+        }
+        #if DEBUG
+        .accessibilityElement(children: .contain)
+        #endif
     }
 
-    /// Edit-details disclosure state (single-draft path).
-    @State private var editDetailsExpanded = false
+    /// Shared orange QA-fixture label — display-only states, never a real
+    /// capture/write. Compiled out of Release.
+    @ViewBuilder
+    private var qaFixtureLabel: some View {
+        #if DEBUG
+        if vm.qaDeleteFixtureActive {
+            Text("QA fixture — display-only state")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.orange.opacity(0.12)))
+        }
+        #endif
+    }
 
-    private var confirmBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            #if DEBUG
-            if vm.qaDeleteFixtureActive {
-                // Labelled QA fixture: display-only state for a screenshot —
-                // no sink is configured; Add fails closed in this process.
-                Text("QA fixture — display-only state")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.orange.opacity(0.12)))
-            }
-            #endif
-            // Plain review question — the user decides on the READABLE
-            // card, not on a form-first material slab.
-            Text(ConfirmationReviewFormat.title(draftCount: vm.confirmationDrafts.isEmpty ? 1 : vm.confirmationDrafts.count))
-                .font(.system(size: 16, weight: .semibold))
-            if vm.confirmationDrafts.isEmpty {
-                // Legacy single-draft path: FULL review — the title and
-                // description wrap completely (no 2-line cutoff), and the
-                // whole review scrolls vertically when the content is
-                // taller than the panel. The Yes/No controls stay pinned
-                // below the scroll, always reachable on screen.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+    // MARK: - Saving stage (compact glass bar; the review card is replaced)
+
+    private var savingStage: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 26)
+            VoiceSavingBar(destination: saveTargetCalendarName)
+            Spacer(minLength: 26)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Review stage (the approved review card)
+
+    private var reviewStage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            singleReviewHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if vm.confirmationDrafts.isEmpty {
+                        // Single-event review: the full readable card.
                         singleReviewCard
-                        DisclosureGroup("Edit details", isExpanded: $editDetailsExpanded) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                TextField("Title", text: $vm.draftTitle)
-                                    .textFieldStyle(.roundedBorder)
-                                DatePicker("Starts", selection: $vm.draftStart)
-                                DatePicker("Ends", selection: $vm.draftEnd)
-                                TextField("Location", text: $vm.draftLocation)
-                                    .textFieldStyle(.roundedBorder)
-                                // Description (0.3.17): the user's extra
-                                // detail, editable before save — it persists
-                                // to EKEvent.notes / Google description as
-                                // reviewed here.
-                                TextField("Description", text: $vm.draftNotes, axis: .vertical)
-                                    .textFieldStyle(.roundedBorder)
-                                    .lineLimit(2...6)
-                                // Reminder (0.3.16): explicit preset menu routed
-                                // through the ViewModel setter — out-of-range
-                                // values are refused there, never clamped here.
-                                HStack {
-                                    Text("Reminder")
-                                        .font(.system(size: 12.5))
-                                    Spacer()
-                                    ReminderPresetMenu(leadMinutes: vm.draftReminderLeadMinutes) { lead in
-                                        vm.setDraftReminderLeadMinutes(lead)
-                                    }
-                                }
-                                if vm.draftEnd <= vm.draftStart {
-                                    Text("End must be after start.").font(.caption).foregroundStyle(.red)
-                                }
-                            }
-                            .padding(.top, 6)
-                        }
-                        .font(.system(size: 12.5, weight: .medium))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                // Multi-draft confirmation list: brief readable summary
-                // cards with per-draft safety (blocking issues, AM/PM
-                // chips, readiness) all explicit; edit fields per draft
-                // under its own disclosure.
-                if !vm.confirmationTranscript.isEmpty {
-                    DisclosureGroup("Original note") {
-                        Text(vm.confirmationTranscript).font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                    .font(.system(size: 12.5, weight: .medium))
-                }
-                if let note = vm.confirmationNote ?? vm.parseNote {
-                    Text(note).font(.caption2).foregroundStyle(.secondary)
-                }
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(vm.confirmationDrafts, id: \.id) { draft in
-                            draftRow(draft)
-                        }
+                    } else {
+                        // Multi-event batch: the per-draft list only —
+                        // never a fake single-event merge.
+                        multiDraftList
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // Partial-batch honesty (0.3.16): when some events persisted and
-            // unsaved drafts remain on this screen, the receipts for the
-            // SAVED events are shown here — only confirmed persisted writes
-            // produce receipts, so a partial failure never claims all saved.
-            if !vm.savedReceipts.isEmpty {
-                SavedReceiptSection(receipts: vm.savedReceipts)
-            }
+            reviewDestinationRow
             if let status = vm.statusMessage {
-                Text(status).font(.caption).foregroundStyle(.red)
-            }
-            if let googleBlock = vm.googleAddBlockMessage {
+                reviewStatusRow(status)
+            } else if let googleBlock = vm.googleAddBlockMessage {
                 Text(googleBlock)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let hint = destinationHint {
+                // Destination isn't ready — say exactly why in the same
+                // honest voice as the note bar (never a silent disabled Add).
+                Text(hint)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Divider()
+            reviewFooter
+        }
+    }
 
-            // P1 explicit Yes/No: Yes is the EXISTING safe Add action
-            // (idempotency / readiness gates / duplicate arming —
-            // unchanged semantics, explicit wording). No is NON-MUTATING:
-            // rejects the draft generation, keeps the recognized text
-            // editable, hints re-speak. A voice "yes" NEVER authorizes a
-            // write — only this button does. No duplicate Back: No is
-            // the single explicit rejection (it also restores the text).
-            HStack {
-                Button("No") { vm.rejectConfirmationDrafts() }
-                    .disabled(!noButtonEnabled)
-                    .help("Not added — keep the text to edit or speak again")
-                Spacer()
-                Button {
+    private var singleReviewHeader: some View {
+        HStack(spacing: 10) {
+            QuietIconTile(systemImage: "calendar", side: 28)
+            Text(ConfirmationReviewFormat.title(draftCount: vm.confirmationDrafts.isEmpty ? 1 : vm.confirmationDrafts.count))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+            Spacer(minLength: 8)
+            closeButton(action: { vm.rejectConfirmationDrafts() }, enabled: noButtonEnabled, label: "Dismiss review without adding")
+        }
+    }
+
+    /// Round X close — the same NON-MUTATING action as Cancel/Escape
+    /// (rejected draft generation; never a calendar write).
+    private func closeButton(action: @escaping () -> Void, enabled: Bool, label: String) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(QuietDesign.Voice.VoiceColor.closeButtonFill(colorScheme)))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .accessibilityLabel(label)
+    }
+
+    /// Destination pill + Edit details — one row, per the approved design.
+    /// The pill names the calendar title only (never the account email);
+    /// tapping it opens Settings to change the destination explicitly.
+    private var reviewDestinationRow: some View {
+        HStack(spacing: 12) {
+            Button { onOpenSettings() } label: {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(QuietPalette.accent)
+                        .frame(width: 8, height: 8)
+                    Text(destinationLabel)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.055)))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("Change the destination calendar in Settings")
+            .accessibilityLabel("Destination calendar")
+            .accessibilityValue(destinationLabel)
+
+            Spacer(minLength: 8)
+
+            if vm.confirmationDrafts.isEmpty {
+                Button("Edit details") {
+                    voiceEditMode = true
+                }
+                .buttonStyle(QuietTextButtonStyle())
+                .accessibilityLabel("Edit event details")
+            }
+        }
+    }
+
+    /// Honest status row: failure renders in the failure red with a warning
+    /// glyph; any other status stays a quieter caution line.
+    private func reviewStatusRow(_ status: String) -> some View {
+        Group {
+            if vm.lastSaveFailed {
+                Label(status, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(QuietDesign.Voice.VoiceColor.failureRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Pinned footer: Cancel · the honest "Nothing added yet" · Add event.
+    private var reviewFooter: some View {
+        HStack(spacing: 12) {
+            Button("Cancel") { vm.rejectConfirmationDrafts() }
+                .buttonStyle(QuietSecondaryButtonStyle())
+                .disabled(!noButtonEnabled)
+                .help("Nothing is added — keep the text to edit or speak again")
+            Spacer(minLength: 8)
+            if vm.savedReceipts.isEmpty && !vm.isSaving {
+                Text("Nothing added yet")
+                    .font(.system(size: 11))
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            }
+            if vm.isSaving {
+                ProgressView().controlSize(.small)
+            } else {
+                Button(addButtonTitle) {
                     if vm.confirmationDrafts.isEmpty {
                         vm.addConfirmedEvent()
                     } else {
                         vm.addAllConfirmationDrafts()
                     }
-                } label: {
-                    if vm.isSaving {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text(addButtonTitle)
-                    }
                 }
-                .buttonStyle(ConfirmPrimaryButtonStyle())
+                .buttonStyle(QuietPrimaryButtonStyle())
                 .disabled(addButtonDisabled)
                 .help(vm.googleAddBlockMessage ?? "Add to the selected calendar")
             }
         }
-        .padding(8)
+    }
+
+    // MARK: - Editing stage (the approved "Edit event details" card)
+
+    private var editingStage: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                QuietIconTile(systemImage: "pencil", side: 28)
+                Text("Edit event details")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                Spacer(minLength: 8)
+                closeButton(action: { voiceEditMode = false }, enabled: true, label: "Finish editing, back to review")
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    editField(label: "TITLE") {
+                        TextField("Title", text: $vm.draftTitle)
+                            .textFieldStyle(VoiceFieldStyle())
+                    }
+                    HStack(alignment: .top, spacing: 8) {
+                        editField(label: "DATE") {
+                            DatePicker("", selection: $vm.draftStart, displayedComponents: [.date])
+                                .labelsHidden()
+                        }
+                        editField(label: "STARTS") {
+                            DatePicker("", selection: $vm.draftStart, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                        }
+                        editField(label: "ENDS") {
+                            DatePicker("", selection: $vm.draftEnd, displayedComponents: [.hourAndMinute])
+                                .labelsHidden()
+                        }
+                    }
+                    editField(label: "LOCATION") {
+                        TextField("Location", text: $vm.draftLocation)
+                            .textFieldStyle(VoiceFieldStyle())
+                    }
+                    HStack(alignment: .top, spacing: 8) {
+                        editField(label: "REMINDER") {
+                            ReminderPresetMenu(leadMinutes: vm.draftReminderLeadMinutes) { lead in
+                                vm.setDraftReminderLeadMinutes(lead)
+                            }
+                        }
+                        editField(label: "CALENDAR") {
+                            HStack(spacing: 7) {
+                                Circle()
+                                    .fill(QuietPalette.accent)
+                                    .frame(width: 8, height: 8)
+                                Text(destinationLabel)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Button("Change…") { onOpenSettings() }
+                                    .buttonStyle(QuietTextButtonStyle())
+                                    .accessibilityLabel("Change destination calendar in Settings")
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(QuietDesign.Voice.VoiceColor.fieldFill(colorScheme))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(QuietDesign.Voice.VoiceColor.cardStroke(colorScheme), lineWidth: 1)
+                            )
+                        }
+                    }
+                    editField(label: "NOTES") {
+                        TextField("Add a note…", text: $vm.draftNotes, axis: .vertical)
+                            .textFieldStyle(VoiceFieldStyle())
+                            .lineLimit(2...4)
+                    }
+                    if vm.draftEnd <= vm.draftStart {
+                        Text("End must be after start.")
+                            .font(.caption)
+                            .foregroundStyle(QuietDesign.Voice.VoiceColor.failureRed)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack(spacing: 12) {
+                Button("Cancel") { voiceEditMode = false }
+                    .buttonStyle(QuietSecondaryButtonStyle())
+                    .help("Back to review — the draft is kept, nothing is added")
+                Spacer(minLength: 8)
+                Button("Done") { voiceEditMode = false }
+                    .buttonStyle(QuietPrimaryButtonStyle())
+                    .help("Back to review — Done does not add the event")
+            }
+        }
+    }
+
+    /// One labelled field row: small-caps caption above the control.
+    private func editField<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 3, content: {
+            Text(label)
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.9)
+                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            content()
+        })
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Multi-draft confirmation list (unchanged behavior; restyled chrome).
+    private var multiDraftList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !vm.confirmationTranscript.isEmpty {
+                DisclosureGroup("Original note") {
+                    Text(vm.confirmationTranscript).font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .font(.system(size: 12.5, weight: .medium))
+            }
+            if let note = vm.confirmationNote ?? vm.parseNote {
+                Text(note).font(.caption2).foregroundStyle(.secondary)
+            }
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(vm.confirmationDrafts, id: \.id) { draft in
+                    draftRow(draft)
+                }
+            }
+        }
     }
 
     /// Readable single-event review card: prominent title, description,
@@ -522,48 +881,58 @@ struct CaptureContentView: View {
     /// content scrolls in the surrounding scroll view instead of being
     /// cut off.
     private var singleReviewCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             Text(vm.draftTitle.isEmpty ? "Untitled event" : vm.draftTitle)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
                 .fixedSize(horizontal: false, vertical: true)
-            Text(ConfirmationReviewFormat.dateTimeLine(start: vm.draftStart, end: vm.draftEnd))
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+            // Full date/time with a sage calendar glyph (the approved
+            // review rows).
+            Label {
+                Text(ConfirmationReviewFormat.dateTimeLine(start: vm.draftStart, end: vm.draftEnd))
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+            } icon: {
+                Image(systemName: "calendar")
+                    .foregroundStyle(QuietPalette.accent)
+            }
+            .font(.system(size: 12.5, weight: .medium))
+            .monospacedDigit()
             if let location = vm.draftLocation.trimmingCharacters(in: .whitespaces) as String?, !location.isEmpty {
-                Label(location, systemImage: "mappin")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text(location)
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                } icon: {
+                    Image(systemName: "mappin")
+                        .foregroundStyle(QuietPalette.accent)
+                }
+                .font(.system(size: 12.5, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
             }
             // Description (0.3.17): the user's extra detail as parsed —
-            // shown in full before save, editable under Edit details. Only
-            // real user-provided content appears here; nothing is invented.
+            // shown in full before save, editable under Edit details.
             if let notes = vm.draftNotes.trimmingCharacters(in: .whitespacesAndNewlines) as String?, !notes.isEmpty {
                 Text(notes)
                     .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .padding(.top, 2)
             }
-            // Reminder info (0.3.16): shown when one was parsed or set —
-            // editable via the preset menu under Edit details.
+            // Reminder info: shown when one was parsed or set — editable
+            // via the preset menu under Edit details.
             if let lead = vm.draftReminderLeadMinutes {
-                Label(ReminderLeadFormat.phrase(minutes: lead), systemImage: "bell")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
+                Label {
+                    Text(ReminderLeadFormat.phrase(minutes: lead))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                } icon: {
+                    Image(systemName: "bell")
+                        .foregroundStyle(QuietPalette.accent)
+                }
+                .font(.system(size: 12.5, weight: .medium))
             }
-            Label(destinationLabel, systemImage: "calendar")
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
         }
-        .padding(14)
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Review: \(vm.draftTitle), \(ConfirmationReviewFormat.dateTimeLine(start: vm.draftStart, end: vm.draftEnd)), calendar \(destinationLabel)")
     }
@@ -582,7 +951,9 @@ struct CaptureContentView: View {
             let pending = vm.confirmationDrafts.filter { $0.savedEventID == nil }.count
             return ConfirmationRejectionPolicy.yesLabel(pendingCount: pending)
         }
-        return vm.duplicateAddArmed ? "Yes, add a copy" : ConfirmationRejectionPolicy.yesLabel(pendingCount: 1)
+        if vm.lastSaveFailed { return "Try again" }
+        if vm.duplicateAddArmed { return "Add a copy" }
+        return "Add event"
     }
 
     private var addButtonDisabled: Bool {
@@ -762,9 +1133,10 @@ struct CaptureContentView: View {
 
     // MARK: Delete review (explicit confirm only — never a silent mutation)
 
-    /// Design tokens for the delete flow (Figma 24:99–24:132).
+    /// Design tokens for the delete flow — the approved deep red delete
+    /// confirmation (#B83A42, white text); success only after verified deletion.
     private enum DeleteTone {
-        static let actionRed = Color(red: 0.843, green: 0.0, blue: 0.082)   // #d70015
+        static let actionRed = QuietDesign.Voice.VoiceColor.deleteDestructive
         static let successGreen = Color(red: 0.102, green: 0.541, blue: 0.239) // #1a8a3d
     }
 
@@ -787,17 +1159,9 @@ struct CaptureContentView: View {
     @ViewBuilder
     private var deleteBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-#if DEBUG
-            if vm.qaDeleteFixtureActive {
-                // Labelled QA fixture: display-only state for a screenshot —
-                // no real event, no sink; confirm fails closed in this process.
-                Text("QA fixture — no real event")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.orange.opacity(0.12)))
-            }
-#endif
+            // Labelled QA fixture: display-only state for a screenshot —
+            // no real event, no sink; confirm fails closed in this process.
+            qaFixtureLabel
             deleteTranscriptRow
 
             switch vm.deleteFlow {
@@ -850,16 +1214,71 @@ struct CaptureContentView: View {
                 }
 
             case .confirmOne(let target):
-                // Design 24:99/24:102 — reviewed target + explicit confirm.
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(DeleteFlowCopy.confirmTitle)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(deleteTargetLine(target))
-                        .font(.system(size: 13))
+                // Reviewed target + explicit confirm — the approved delete
+                // design (deep red action, read-only destination calendar,
+                // never a delete on release or on the X button).
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(DeleteTone.actionRed.opacity(0.12))
+                                .frame(width: 28, height: 28)
+                            Image(systemName: "trash")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DeleteTone.actionRed)
+                        }
+                        .accessibilityHidden(true)
+                        Text(DeleteFlowCopy.confirmTitle)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                        Spacer(minLength: 8)
+                        closeButton(action: { vm.cancelDelete() }, enabled: true, label: "Dismiss delete review without deleting")
+                    }
+                    Text(target.title)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
                         .fixedSize(horizontal: false, vertical: true)
-                }
-                deleteActionRow(confirmEnabled: true) {
-                    vm.confirmDeleteClicked()
+                    Label {
+                        Text(ConfirmationReviewFormat.dateTimeLine(start: target.start, end: target.end))
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    } icon: {
+                        Image(systemName: "calendar")
+                            .foregroundStyle(QuietPalette.accent)
+                    }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .monospacedDigit()
+                    // Read-only destination: the exact calendar this delete
+                    // targets — no chevron, no picker, nothing editable.
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(QuietPalette.accent)
+                            .frame(width: 8, height: 8)
+                        Text(target.calendarTitle)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.055))
+                    )
+                    .accessibilityLabel("Delete target calendar \(target.calendarTitle)")
+                    Text("This removes the event from \(target.calendarTitle).")
+                        .font(.system(size: 12))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    Divider()
+                    HStack(spacing: 12) {
+                        Button(DeleteFlowCopy.cancelButton) { vm.cancelDelete() }
+                            .buttonStyle(QuietSecondaryButtonStyle())
+                            .help("Nothing is deleted")
+                        Spacer(minLength: 8)
+                        Text("Confirm to delete")
+                            .font(.system(size: 11))
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                        destructiveDeleteButton(enabled: true) { vm.confirmDeleteClicked() }
+                    }
                 }
 
             case .deleting:
@@ -906,41 +1325,35 @@ struct CaptureContentView: View {
             .buttonStyle(.bordered)
     }
 
-    /// Cancel + "Delete event" pair (design 24:106/24:108). The red action
-    /// is the ONLY mutation trigger in the whole flow.
+    /// Cancel + "Delete event" pair (the chooser path). The red action is
+    /// the ONLY mutation trigger in the whole flow.
     private func deleteActionRow(confirmEnabled: Bool, onConfirm: @escaping () -> Void) -> some View {
         HStack {
             Button(DeleteFlowCopy.cancelButton) { vm.cancelDelete() }
-                .buttonStyle(.bordered)
+                .buttonStyle(QuietSecondaryButtonStyle())
             Spacer()
-            Button {
-                onConfirm()
-            } label: {
-                Text(DeleteFlowCopy.deleteButton)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(minHeight: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(DeleteTone.actionRed)
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(!confirmEnabled)
-            .opacity(confirmEnabled ? 1 : 0.5)
-            .accessibilityLabel(DeleteFlowCopy.deleteButton)
+            destructiveDeleteButton(enabled: confirmEnabled, action: onConfirm)
         }
     }
 
-    /// "Title — Fri 14 Nov · 2:00–3:00 PM · Calendar: Home"
-    private func deleteTargetLine(_ target: DeleteTarget) -> String {
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "EEE d MMM"
-        let timeFormatter = DateFormatter()
-        timeFormatter.timeStyle = .short
-        return "\(target.title) — \(dayFormatter.string(from: target.start)) · \(timeFormatter.string(from: target.start))–\(timeFormatter.string(from: target.end)) · Calendar: \(target.calendarTitle)"
+    /// The one destructive control: filled deep red (#B83A42) with white
+    /// text. Disabled state never implies a mutation happened.
+    private func destructiveDeleteButton(enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(DeleteFlowCopy.deleteButton)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(minHeight: 30)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(DeleteTone.actionRed.opacity(enabled ? 1 : 0.35))
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(DeleteFlowCopy.deleteButton)
     }
 
     /// "Title · Fri 14 Nov, 2:00 PM"
@@ -957,6 +1370,20 @@ struct CaptureContentView: View {
 
     private var scheduleBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // 2026-11-12: the transient quiet receipt bar after a confirmed
+            // save — ~1.6 s hold, then a 140 ms fade + Y 0 → −8 dismiss.
+            // Renders ONLY from confirmed persisted receipts (same honesty
+            // contract as the receipt cards below); never a pre-save claim.
+            if receiptHoldVisible, let last = vm.savedReceipts.last {
+                VoiceReceiptBar(
+                    calendarName: last.calendarSummary
+                        ?? (last.provider == .google ? "Google Calendar" : "Apple Calendar"),
+                    title: last.title,
+                    detail: shortReceiptDetail(last)
+                )
+                .frame(maxWidth: 400)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -8)))
+            }
             // 0.3.16 owner clarification: after a confirmed successful Add
             // the SAVED EVENT itself is shown — rendered ONLY from real
             // persisted-write receipts (`SavedEventReceipt`), with Google's
@@ -984,6 +1411,17 @@ struct CaptureContentView: View {
                 .frame(maxWidth: .infinity)
         }
         .onAppear { vm.reloadScheduleIfPossible() }
+        .task(id: savedReceiptSignature) {
+            // Show the just-saved receipt bar once per receipt generation,
+            // hold ~1.6 s, then dismiss it with the approved 140 ms
+            // (fade + Y 0 → −8; opacity-only under Reduce Motion).
+            guard !savedReceiptSignature.isEmpty else { return }
+            receiptHoldVisible = true
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            withAnimation(.easeOut(duration: QuietDesign.Voice.Motion.dismiss)) {
+                receiptHoldVisible = false
+            }
+        }
     }
 
     /// Apple-Calendar day browser (EventKit destination only): serif day
@@ -1098,22 +1536,22 @@ private struct CapsuleIconControl: View {
     }
 }
 
-/// P1 confirm primary button: deep-sage capsule (#4e7a62, AA for white
-/// text) matching the onboarding primary — the EXPLICIT Yes action.
-private struct ConfirmPrimaryButtonStyle: ButtonStyle {    @Environment(\.isEnabled) private var isEnabled
+/// Soft edit-card field (2026-11-12): rounded 10 rectangle with the
+/// approved field fill + hairline stroke — scheme-adaptive.
+private struct VoiceFieldStyle: TextFieldStyle {
+    @Environment(\.colorScheme) private var colorScheme
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(configuration.isPressed ? 0.85 : 1))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
             .background(
-                Capsule(style: .continuous)
-                    .fill(isEnabled
-                          ? Color(red: 0.306, green: 0.478, blue: 0.384)
-                            .opacity(configuration.isPressed ? 0.75 : 1)
-                          : Color(red: 0.306, green: 0.478, blue: 0.384).opacity(0.35))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(QuietDesign.Voice.VoiceColor.fieldFill(colorScheme))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(QuietDesign.Voice.VoiceColor.cardStroke(colorScheme), lineWidth: 1)
             )
     }
 }

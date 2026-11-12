@@ -71,7 +71,7 @@ final class CapturePanelController: NSObject, NSWindowDelegate {
         applyPresentationPolicy(to: panel)
 
         if CapturePanelPresentationPolicy.centerOnActiveDisplayEachInvocation {
-            centerOnActiveDisplay()
+            topAnchorOnActiveDisplay()
         }
 
         // Order above the frontmost app first, then take key for the text field.
@@ -130,6 +130,31 @@ final class CapturePanelController: NSObject, NSWindowDelegate {
         } else {
             finish()
         }
+    }
+
+    /// Anchors the panel top-center, 12 pt below the target display's safe
+    /// visible area — the approved voice/glass placement. The capture panel
+    /// is the successor surface to the listening bar, so it keeps the SAME
+    /// top+center anchor (grows downward, never re-centered) instead of
+    /// the old vertical centering. Callers may still drag the panel; the
+    /// next summon re-anchors.
+    func topAnchorOnActiveDisplay() {
+        guard let panel else { return }
+        let mouse = NSEvent.mouseLocation
+        let screens = NSScreen.screens
+        let mouseIndex = screens.firstIndex { NSMouseInRect(mouse, $0.frame, false) }
+        guard let index = CapturePanelPresentationPolicy.activeDisplayIndex(
+            mouseScreenIndex: mouseIndex,
+            screenCount: screens.count
+        ) else { return }
+        let screen = screens[index]
+        let visible = screen.visibleFrame
+        let size = panel.frame.size
+        let width = size.width
+        let x = visible.minX + max(0, (visible.width - width) / 2)
+        let y = visible.maxY - size.height - QuietDesign.Voice.Metric.topInset
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        defaults.set(true, forKey: AppPreferenceKey.panelDidCenterOnce)
     }
 
     /// Centers on the display under the mouse (else primary). Called on every summon.

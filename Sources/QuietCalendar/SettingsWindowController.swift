@@ -860,6 +860,7 @@ struct SettingsView: View {
                 DisclosureGroup("Licenses & notices") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Parakeet speech weights use the NVIDIA Open Model License.")
+                        Text("The app updater uses Sparkle 2.10.1 under the MIT license.")
                         Text("Full license texts ship in the app bundle under Resources/Notices.")
                     }
                     .font(.caption)

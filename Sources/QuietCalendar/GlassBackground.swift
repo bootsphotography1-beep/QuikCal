@@ -1,46 +1,73 @@
 import SwiftUI
 import AppKit
 
-/// Restrained glass using supported materials; respects Reduce Transparency.
+/// Voice-glass surface for the capture/review surfaces (2026-11-12 approved
+/// voice/glass design): scheme-adaptive — near-white in Light, deep
+/// green-charcoal in Dark — a REAL material with a scheme tint over it, a
+/// thin inset top highlight, a hairline stroke and a soft drop shadow.
+/// Reduce Transparency flattens to an opaque scheme-solid; Increased
+/// Contrast strengthens the stroke; content and controls stay sharp.
 struct GlassBackground: View {
     var intensity: Double
-    var cornerRadius: CGFloat = 22
+    var cornerRadius: CGFloat = QuietDesign.Voice.Metric.cardCorner
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let clamped = min(1, max(0, intensity))
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(Color.clear)
-            .background(materialLayer(clamped))
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(borderColor(clamped), lineWidth: contrast == .increased ? 1.5 : 1)
-            )
-            .shadow(color: .black.opacity(reduceTransparency ? 0.08 : 0.18 * clamped), radius: 24, y: 10)
-    }
-
-    @ViewBuilder
-    private func materialLayer(_ intensity: Double) -> some View {
-        if reduceTransparency {
-            Color(nsColor: .windowBackgroundColor).opacity(0.96)
-        } else {
-            ZStack {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            if reduceTransparency {
+                // Accessible opaque fallback — no material, full contrast.
+                shape.fill(QuietDesign.Voice.VoiceColor.cardFill(colorScheme))
+            } else {
                 Rectangle().fill(.ultraThinMaterial)
-                // 0% = mostly opaque solid; 100% = near-clear glass showing colors behind.
-                Color(nsColor: .windowBackgroundColor).opacity(0.92 * (1 - intensity))
-                Color.primary.opacity(0.06 * (1 - intensity))
+                // More glass (slider) → less solid fill, same curve as the
+                // voice bar; the floor keeps content contrast over any backdrop.
+                shape.fill(
+                    QuietDesign.Voice.VoiceColor.cardFill(colorScheme)
+                        .opacity(0.55 + 0.35 * (1 - clamped))
+                )
             }
         }
-    }
-
-    private func borderColor(_ intensity: Double) -> Color {
-        if contrast == .increased {
-            return Color.primary.opacity(0.35)
+        .clipShape(shape)
+        .overlay {
+            shape
+                .strokeBorder(
+                    contrast == .increased
+                        ? Color.primary.opacity(0.35)
+                        : QuietDesign.Voice.VoiceColor.cardStroke(colorScheme),
+                    lineWidth: contrast == .increased ? 1.5 : 1
+                )
         }
-        return Color.primary.opacity(0.08 + 0.12 * intensity)
+        .overlay(alignment: .top) {
+            // Thin inset top highlight (the lit rim) — hidden under Reduce
+            // Transparency / Increased Contrast.
+            if !reduceTransparency && contrast != .increased {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [QuietDesign.Voice.VoiceColor.barTopHighlight(colorScheme), .clear],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                    .frame(height: 1.5)
+                    .padding(.horizontal, 12)
+                    .allowsHitTesting(false)
+            }
+        }
+        .shadow(
+            color: .black.opacity(
+                reduceTransparency
+                    ? (colorScheme == .dark ? 0.25 : 0.10)
+                    : (colorScheme == .dark
+                        ? QuietDesign.Voice.Material.shadowDarkOpacity
+                        : QuietDesign.Voice.Material.shadowLightOpacity)),
+            radius: QuietDesign.Voice.Material.shadowRadius,
+            y: QuietDesign.Voice.Material.shadowY
+        )
     }
 }
 
@@ -176,10 +203,3 @@ struct GlassDemoBackdrop: View {
         }
     }
 }
-
-/// Glass bar composited over `GlassDemoBackdrop` so slider endpoints look
-/// different. — REMOVED 2026-11-07 (owner one-preview revision): the old
-/// typing-bar demo stage (`GlassPreviewStage`) was superseded by
-/// `VoiceBarPreviewStage` in VoiceBarGlass.swift, which stages the REAL
-/// production voice pill over the same `GlassDemoBackdrop`.
-

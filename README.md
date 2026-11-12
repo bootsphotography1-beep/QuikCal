@@ -73,7 +73,7 @@ The `.dmg` filename contains the version number, so a newer release has a newer 
 
 1. In **Applications**, double-click **QuikCal**. If macOS blocks it, follow Step 5 below, then return here.
 2. Look in the **menu bar at the top-right of your screen**, near the clock, battery and Wi-Fi icons. QuikCal shows a small **calendar-with-a-plus** icon and has **no Dock icon**.
-3. The **setup window opens automatically** on first launch. Continue with [Part 2](#part-2--the-five-step-setup-walkthrough).
+3. The **setup window opens automatically** on first launch, starting with a short setup card — click **Start Setup** to begin. Continue with [Part 2](#part-2--the-five-step-setup-walkthrough).
 
 If you cannot see the icon, switch to Finder so fewer app menus occupy the menu bar. On a Mac with a camera notch, some icons may not fit. If you use a menu-bar organizer, check its hidden icons. You can also reopen QuikCal from Applications: setup opens if unfinished, or Settings opens after setup.
 
@@ -108,7 +108,7 @@ You do not need to disable Gatekeeper or System Integrity Protection, or run Ter
 
 ## Part 2 — The five-step setup walkthrough
 
-The setup window has five short pages. You can leave and come back: if you stop halfway, QuikCal reopens exactly where you stopped the next time you launch it.
+The setup window has five short pages. You can leave and come back: if you stop halfway, the next launch first shows a short card — click **Resume Setup** to continue exactly where you stopped, or **Open Settings** to finish in Settings instead.
 
 ### Setup page 1 — Welcome
 
@@ -121,8 +121,8 @@ This is the most important page, because it decides where your events are saved.
 1. Pick a **destination**:
    - **Mac calendars (EventKit)** — any calendar on your Mac, including your **iCloud** calendars if you are signed into iCloud in System Settings → Apple ID. Choose this if you want QuikCal to behave exactly like Apple Calendar.
    - **Google** — sign in with a Google account and pick a Google Calendar. See [Google Calendar](#google-calendar) below.
-2. For **Mac calendars**, click **Choose EventKit calendar…**. macOS will ask for permission to access your calendars ("QuikCal needs calendar access so you can pick a writable calendar and add events you explicitly confirm"). Click **OK**. Your writable calendars then appear in a list — click the one you want. A tick mark appears next to your choice.
-3. If you would rather start with the system prompt, the same page offers **Connect calendar**.
+2. For **Mac calendars**, click **Connect calendar**. macOS will ask for permission to access your calendars ("QuikCal needs calendar access so you can pick a writable calendar and add events you explicitly confirm"). Click **OK**. Your writable calendars then appear in a list on the same page — click the one you want. A tick mark appears next to your choice.
+3. If macOS grants QuikCal only limited ("add-only") access, QuikCal says so honestly: events go to your default calendar, and you can grant fuller access and pick a specific calendar later in **Settings → Calendars & Accounts**.
 4. If you skip this page, QuikCal will not know where to put events, and the add button stays disabled. You can finish it later in **Settings → Calendars & Accounts**.
 
 > You only ever need **one** destination. QuikCal writes to Mac calendars **or** Google, never to both at once.
@@ -134,7 +134,7 @@ QuikCal can capture your voice. To do that it needs macOS to allow it to see you
 - **If you chose Fn (Globe) as the hold-to-talk key** → you need **Input Monitoring**.
 - **If you chose Option, Command or Control** → you need **Accessibility** (Input Monitoring also works for these).
 
-The page has a **Skip** button, and skipping is genuinely fine: **typing always works**, and you can grant the permission later in **Settings → General**.
+The page offers **Set up voice later**, and skipping is genuinely fine: **typing always works**, and you can grant the permission later in **Settings → General**. Choosing it skips the remaining voice steps and lands on the final page.
 
 Details for every permission are in [Part 3](#part-3--permissions-explained).
 
@@ -151,7 +151,7 @@ This page also has a short **practice** step where you can try holding your shor
 
 ### Setup page 5 — Ready
 
-A short summary and a **Finish** button. When you finish, QuikCal shows a small **hint anchored to the real menu-bar icon** explaining that a left-click captures and a right-click opens Settings. You can replay that hint any time from **Settings → General → Show menu bar hint**. Dismissing it never resets your setup.
+A short summary and an **Open QuikCal** button. When you finish, QuikCal shows a small **hint anchored to the real menu-bar icon** explaining that a left-click captures and a right-click opens Settings. You can replay that hint any time from **Settings → General → Show menu bar hint**. Dismissing it never resets your setup.
 
 ---
 

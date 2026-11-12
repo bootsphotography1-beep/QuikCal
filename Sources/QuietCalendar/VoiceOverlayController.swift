@@ -2,46 +2,33 @@ import AppKit
 import SwiftUI
 import QuietCalendarCore
 
-/// Compact, top-center "Dynamic-Island-like" pill shown while the user holds
-/// the hold-to-talk shortcut. Replaces the old behaviour of popping the full
-/// capture panel on hold:
+/// Compact, top-center voice/glass bar shown while the user holds the
+/// hold-to-talk shortcut. 2026-11-12 (approved voice/glass overlay):
 ///
-/// - Appears instantly on hold, on the screen under the mouse (else main).
+/// - Appears on the display under the mouse (else main), 12 pt below that
+///   display's safe visible area (below the notch / menu bar).
 /// - **No focus theft**: the panel is non-activating, can never become key,
 ///   and ignores mouse events entirely — the user keeps typing/working.
-/// - States: `listening` (with REAL amplitude + genuine live partial words,
-///   wrapping DOWNWARD inside a stable top-anchored frame) → `processing`
-///   (phase-specific: Transcribing… / Understanding…) → hidden (the
-///   existing full capture panel then presents the explicit confirmation).
-/// - `blocked` shows one concise, non-technical reason (model / mic /
-///   permission unavailable) and auto-dismisses — never silent.
+/// - **420 × 56 pt** compact surface; entry 180 ms (Y −12 → 0, opacity
+///   0 → 1, no overshoot). Radius 28.
+/// - States: `listening` (REAL microphone amplitude — silence NEVER
+///   produces a fake pulse; genuine live partial words grow the SAME
+///   surface DOWNWARD to ~138 pt (≤ 2 lines) / ~158 pt (≥ 3 lines) with the
+///   top edge FIXED; the full transcript is preserved in a bounded scroll
+///   region — nothing is truncated away) → `processing` (honest
+///   preparation state, mic immediately off) → hidden (the capture panel
+///   then presents the explicit confirmation).
+/// - `blocked` shows one concise, non-technical reason and auto-dismisses —
+///   never silent.
 /// - P0: `.processing` is NEVER terminal — a 95 s backstop resolves it
 ///   (cancelling the underlying generation via the AppDelegate) with an
 ///   honest Retry/Type message.
-/// - Honors Reduce Motion (no expansion animation) and clamps to the visible
-///   frame (menu bar / notch / multi-screen safe via `VoiceOverlayPolicy`).
-///
-/// ## 0.3.17 streaming-stability rework (owner-reported vertical vibration)
-///
-/// Root causes found in the previous implementation, all fixed here:
-/// 1. `show()` replaced `panel.contentView` with a BRAND-NEW `NSHostingView`
-///    on every live update (every partial word + every ~20 Hz amplitude
-///    tick) — the whole AppKit view tree was rebuilt per word.
-/// 2. `panel.setFrame(..., animate: true)` ran on EVERY live update, and
-///    the width policy re-estimated the width from the character count per
-///    word — so the top-CENTER origin (x = center − width/2) shifted per
-///    word and each setFrame interrupted the previous frame animation
-///    mid-flight: continuous x/y "vibration".
-/// 3. The amplitude waveform changed its FONT SIZE with the live level, so
-///    the (vertically centered) content row changed height at ~20 Hz — the
-///    text bobbed up and down while the user spoke.
-///
-/// The bar now keeps ONE stable frame for the whole listening state (one
-/// animated transition when the first live word arrives), the content is
-/// TOP-anchored so wrapped transcript lines extend DOWNWARD without moving
-/// existing lines, the waveform glyph lives in a FIXED frame (only opacity
-/// follows the level), and live updates only swap the SwiftUI root value —
-/// never the hosting view, never the window frame.
+/// - Reduce Motion: ~90 ms opacity-only fades — no translation, no resizing,
+///   no equalizer movement. Reduce Transparency: fully opaque scheme-solid
+///   surface (handled in `VoiceBarSurface`); content/contrast preserved.
+/// - Light/Dark: fully adaptive via `QuietDesign.Voice` tokens.
+/// - Honors Reduce Motion and clamps to the visible frame
+///   (notch / multi-screen safe via `VoiceOverlayPolicy`).
 @MainActor
 final class VoiceOverlayController {
     enum State: Equatable {
@@ -50,26 +37,38 @@ final class VoiceOverlayController {
         case blocked(reason: String)
     }
 
-    /// Compact pill base size (no preview text yet).
-    private let pillWidth: Double = 260
-    private let pillHeight: Double = 44
-    /// Stable LISTENING frame once live words exist: up to 3 wrapped
-    /// transcript lines + the "Release to finish" caption + padding. The
-    /// transcript wraps DOWNWARD inside the stable width; the oldest words
-    /// head-truncate so the TAIL (the latest words the user just said)
-    /// stays visible.
-    private let listeningExpandedHeight: Double = 88
+    /// Compact surface (the approved 420 × 56 geometry).
+    private let pillWidth: Double = QuietDesign.Voice.Metric.listeningWidth
+    private let pillHeight: Double = QuietDesign.Voice.Metric.listeningHeight
+    /// Growth geometry: transcript states grow DOWNWARD, top edge fixed.
+    private let transcriptTwoLineHeight: Double = QuietDesign.Voice.Metric.transcriptTwoLineHeight
+    private let transcriptThreeLineHeight: Double = QuietDesign.Voice.Metric.transcriptThreeLineHeight
     /// Blocked reasons self-dismiss after this long.
     private let blockedAutoDismissSeconds: TimeInterval = 4
     /// P0: hard ceiling for the visible processing state (never a default
     /// wait — first transcription pops the draft in typically < 2 s).
     private let processingBackstopSeconds: TimeInterval = ProcessingBackstopPolicy.maxProcessingSeconds
 
-    /// The Glass slider's live value for the pill background (2026-11-07:
-    /// the setting now affects the REAL voice bar, not just previews).
-    /// Wired by the AppDelegate to the persisted preference; the default
-    /// keeps a sensible mid value if never set.
+    /// The Glass slider's live value for the bar background.
     var glassIntensityProvider: () -> Double = { 0.65 }
+
+    /// The user's configured shortcut — displayed as the bar's key badge and
+    /// release hint ("Release Fn to review" / "Release Option to review" …).
+    /// Read from the same persisted preference the app uses; in the ephemeral
+    /// QA domain (`--qc-qa-defaults`) the QA suite is read instead so QA
+    /// fixtures never observe the owner's real toggles.
+    var shortcutProvider: () -> HoldToTalkShortcutKind = {
+        #if DEBUG
+        let qaMode = ProcessInfo.processInfo.arguments.contains(QAHostRouter.defaultsFlag)
+        let defaults = qaMode
+            ? UserDefaults(suiteName: QAHostRouter.qaDefaultsSuiteName) ?? .standard
+            : .standard
+        #else
+        let defaults = UserDefaults.standard
+        #endif
+        let raw = defaults.string(forKey: AppPreferenceKey.holdToTalkShortcut)
+        return HoldToTalkShortcutKind(rawValue: raw ?? "") ?? .fn
+    }
 
     /// P0 backstop: fired by the controller when the processing state has
     /// been visible for the full backstop window. The AppDelegate cancels
@@ -77,25 +76,28 @@ final class VoiceOverlayController {
     var onProcessingBackstop: (() -> Void)?
 
     private var panel: NSPanel?
-    /// ONE hosting view for the panel's lifetime — live updates replace the
-    /// SwiftUI root VALUE (an in-place diff), never the NSView tree itself.
+    /// ONE hosting view for the panel's lifetime; live updates swap the
+    /// SwiftUI root value in place.
     private var hostingView: NSHostingView<VoiceOverlayPillView>?
     private(set) var state: State?
     private var autoDismissTask: Task<Void, Never>?
     private var backstopTask: Task<Void, Never>?
+    /// The last fully-renderable state, kept so `hide()` can animate the
+    /// dismiss of the CURRENT surface (Y 0 → −8 + fade) instead of cutting.
+    private var dismissingState: State?
     /// Visible frame the current hold is anchored to. Captured when the
     /// pill appears (or on a state-kind change) and REUSED for every live
     /// listening update — the top edge never re-anchors (or follows the
     /// mouse) mid-hold while words stream.
     private var anchoredVisibleFrame: NSRect?
 
-    /// True while the phase-specific processing pill is visible.
+    /// True while the preparation (processing) surface is visible.
     var isProcessingState: Bool {
         if case .processing = state { return true }
         return false
     }
 
-    /// Shows (or updates) the pill on the screen under the mouse.
+    /// Shows (or updates) the bar on the screen under the mouse.
     func show(_ newState: State) {
         autoDismissTask?.cancel()
         autoDismissTask = nil
@@ -104,7 +106,7 @@ final class VoiceOverlayController {
         let previousState = state
         state = newState
 
-        // Anchor resolution: while the pill is visible AND the state stays
+        // Anchor resolution: while the bar is visible AND the state stays
         // `.listening` (live partials/amplitude), the previously anchored
         // visible frame is REUSED — no per-word re-anchoring, no following
         // the mouse across displays mid-hold. A fresh anchor is computed on
@@ -132,20 +134,18 @@ final class VoiceOverlayController {
             visibleFrameWidth: Double(visible.width),
             visibleFrameHeight: Double(visible.height),
             pillWidth: width,
-            pillHeight: height
+            pillHeight: height,
+            topInset: QuietDesign.Voice.Metric.topInset
         )
         let newFrame = NSRect(x: origin.x, y: origin.y, width: width, height: height)
 
         let panel = self.panel ?? makePanel()
         self.panel = panel
 
-        // ONE hosting view for the panel's lifetime; updates swap the root
-        // value in place (SwiftUI diffs the same view type). The NSView
-        // tree, the window backing and the responder chain are never
-        // rebuilt per word.
         let rootView = VoiceOverlayPillView(
             state: newState,
             glassIntensity: glassIntensityProvider(),
+            shortcut: shortcutProvider(),
             fillsFrame: true
         )
         if let hosting = hostingView {
@@ -158,8 +158,8 @@ final class VoiceOverlayController {
 
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Frame animation ONLY for real geometry changes (state transitions
-        // like compact→expanded or listening→processing) — a live word
-        // update keeps the exact same frame, so nothing animates per word.
+        // like compact → grown transcript, or listening → processing) — a
+        // live word update that keeps the same frame animates nothing.
         let frameChanged = panel.frame != newFrame
         if frameChanged {
             panel.setFrame(
@@ -170,19 +170,11 @@ final class VoiceOverlayController {
         }
 
         if !panel.isVisible {
-            panel.alphaValue = reduceMotion ? 1 : 0
             panel.orderFrontRegardless()
-            if !reduceMotion {
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.15
-                    panel.animator().alphaValue = 1
-                }
-            }
-        } else if panel.alphaValue < 1 {
-            // A hide() fade-out is still in flight (e.g. release → new hold
-            // within the 150 ms fade). Re-target the fade so the new state is
-            // actually visible instead of fading out with the old one.
-            panel.animator().alphaValue = 1
+        } else if hostingView != nil {
+            // A dismiss() is still animating (e.g. release → new hold within
+            // the 140 ms window). The swap to a fresh (non-dismissing) root
+            // view animates the content back down into place.
         }
 
         switch newState {
@@ -193,7 +185,7 @@ final class VoiceOverlayController {
                 self?.hideIfBlocked()
             }
         case .processing:
-            // P0: the pill is never a terminal state — the backstop fires
+            // P0: the bar is never a terminal state — the backstop fires
             // through the AppDelegate (which cancels the underlying work).
             let seconds = processingBackstopSeconds
             backstopTask = Task { [weak self] in
@@ -206,11 +198,11 @@ final class VoiceOverlayController {
         }
     }
 
-    /// P2 live update WHILE CAPTURING: re-renders the listening pill with
+    /// P2 live update WHILE CAPTURING: re-renders the listening bar with
     /// the genuine partial words + real amplitude. No-op in any other
     /// state. A nil preview keeps the current words (amplitude-only
-    /// update). The frame is stable across these updates by design — only
-    /// the content re-renders.
+    /// update). The frame is stable across these updates except for the
+    /// fixed compact → grown transition; nothing re-anchors mid-hold.
     func updateLive(preview: LiveVoicePreview?, amplitude: Double) {
         guard case .listening(let currentPreview, let currentAmplitude) = state else { return }
         let newPreview = preview ?? currentPreview
@@ -218,32 +210,53 @@ final class VoiceOverlayController {
         show(.listening(preview: newPreview, amplitude: amplitude))
     }
 
+    /// Dismiss with the approved motion: 140 ms — Y 0 → −8 + fade (~90 ms
+    /// opacity-only under Reduce Motion).
     func hide() {
         autoDismissTask?.cancel()
         autoDismissTask = nil
         backstopTask?.cancel()
         backstopTask = nil
+        dismissingState = state
         state = nil
         anchoredVisibleFrame = nil
-        guard let panel else { return }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if reduceMotion {
-            panel.orderOut(nil)
-        } else {
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.15
-                panel.animator().alphaValue = 0
-            }, completionHandler: { Task { @MainActor in
-                // A newer show() may have re-used the panel (state != nil) —
-                // never order it out from under a visible pill.
-                guard self.state == nil, let panel = self.panel else { return }
-                panel.orderOut(nil)
-                panel.alphaValue = 1
-            } })
+        guard let panel, panel.isVisible else {
+            dismissingState = nil
+            return
+        }
+        let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? QuietDesign.Voice.Motion.fade
+            : QuietDesign.Voice.Motion.dismiss
+        if let hostingView, let dismissingState {
+            // Swap to the same surface with `dismissing: true` — SwiftUI
+            // animates Y 0 → −8 and opacity → 0 (`.animation` on the
+            // modifiers). No panel-level alpha fade double-dip.
+            hostingView.rootView = VoiceOverlayPillView(
+                state: dismissingState,
+                glassIntensity: glassIntensityProvider(),
+                shortcut: shortcutProvider(),
+                fillsFrame: true,
+                dismissing: true
+            )
+        }
+        let panelRef = panel
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000) + 20_000_000)
+            // A newer show() may have re-used the panel — never order it
+            // out from under a visible bar.
+            guard self.state == nil else { return }
+            panelRef.orderOut(nil)
+            self.hostingView?.rootView = VoiceOverlayPillView(
+                state: .listening(preview: nil, amplitude: 0),
+                glassIntensity: self.glassIntensityProvider(),
+                shortcut: self.shortcutProvider(),
+                fillsFrame: true
+            )
+            self.dismissingState = nil
         }
     }
 
-    /// A blocked pill auto-hides; listening/processing pills never do.
+    /// A blocked bar auto-hides; listening/processing bars never do.
     private func hideIfBlocked() {
         guard case .blocked = state else { return }
         hide()
@@ -254,33 +267,40 @@ final class VoiceOverlayController {
         return false
     }
 
-    /// STABLE width (0.3.17): compact until the first live word, then the
-    /// fixed screen-aware expanded width for the REST of the hold — the
-    /// width no longer chases the streaming character count, so the
-    /// top-center origin never shifts per word.
+    /// STABLE width (the approved 420 pt), clamped to the visible frame so
+    /// the bar can never spill off a narrow display or under the notch.
     private func frameWidth(for newState: State, visibleWidth: Double) -> Double {
+        let maxWidth = max(pillWidth, visibleWidth - 2 * 16)
+        _ = newState
+        return min(pillWidth, maxWidth)
+    }
+
+    /// STABLE height per state: 56 pt compact (listening-idle / processing /
+    /// blocked); the listening state grows DOWNWARD (top edge fixed) to
+    /// ~138 pt for a ≤ 2-line transcript or ~158 pt for ≥ 3 lines.
+    private func frameHeight(for newState: State) -> Double {
         switch newState {
         case .listening(let preview, _):
-            return VoiceBarWidthPolicy.width(
-                previewCharacterCount: preview?.text.count ?? 0,
-                visibleFrameWidth: visibleWidth
-            )
+            guard let preview, !preview.text.isEmpty else { return pillHeight }
+            return estimatedTranscriptLines(preview.text) <= 2
+                ? transcriptTwoLineHeight
+                : transcriptThreeLineHeight
         case .processing, .blocked:
-            return pillWidth
+            return pillHeight
         }
     }
 
-    /// STABLE height: one fixed height per state. The listening state
-    /// keeps ONE height for the whole hold (the compact→expanded jump
-    /// happens at most ONCE, when the first live word arrives — animated
-    /// as a state transition, top edge anchored, growing downward).
-    private func frameHeight(for newState: State) -> Double {
-        switch newState {
-        case .listening(let preview, _) where preview != nil:
-            return listeningExpandedHeight
-        default:
-            return pillHeight
+    /// Rough wrap estimate for SF Pro 13 pt medium in the transcript
+    /// column (≈ 52 chars per line at 348 pt text width). Conservative —
+    /// when in doubt the taller (3-line) height wins; content is never
+    /// clipped either way (the transcript scrolls inside the fixed height).
+    private func estimatedTranscriptLines(_ text: String) -> Int {
+        let charsPerLine = 52
+        var lines = 0
+        for paragraph in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            lines += max(1, Int(ceil(Double(paragraph.count) / Double(charsPerLine))))
         }
+        return max(1, lines)
     }
 
     /// Non-activating, click-through, floating — never steals focus or input.
@@ -294,7 +314,7 @@ final class VoiceOverlayController {
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false // the surface draws its own soft shadow
         panel.ignoresMouseEvents = true
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
@@ -304,9 +324,9 @@ final class VoiceOverlayController {
     }
 }
 
-/// Phase-specific processing status (P0): never a generic "Working" for the
-/// entire flow — Transcribing while inference runs, Understanding while the
-/// parse pipeline runs.
+/// Phase-specific processing status (P0): honest, never a generic
+/// "Working" claim. The preparation surface presents one calm status
+/// ("Preparing your event…"); the phase drives VoiceOver only.
 enum HoldProcessingPhase: Equatable {
     case transcribing
     case understanding
@@ -319,128 +339,239 @@ enum HoldProcessingPhase: Equatable {
     }
 }
 
-/// The pill itself: shared glass surface (the SAME `VoiceBarSurface` the
-/// Appearance preview uses — the Glass slider drives the REAL bar's
-/// background), charcoal-tinted at every setting so the fixed light
-/// content keeps contrast. Content is NEVER blurred — the material lives
-/// on the background only.
+/// The bar itself: scheme-adaptive glass (`VoiceBarSurface`), mic-live
+/// accents, the configured key badge, REAL amplitude equalizer, and the
+/// genuine live transcript in a bounded, top-anchored scroll region.
 ///
-/// 0.3.17 streaming stability: when `fillsFrame` is true (the overlay
-/// panel), the content is TOP-LEADING anchored inside the panel's stable
-/// frame — wrapped transcript lines extend DOWNWARD and existing lines
-/// never shift up; the transcript is bounded to 3 lines with HEAD
-/// truncation so the tail (the words the user just said) stays visible.
-/// The waveform glyph sits in a FIXED 22 pt frame (only opacity follows
-/// the live amplitude) so the content row's height never changes at 20 Hz.
+/// 2026-11-12 streaming stability: content is TOP-LEADING anchored inside
+/// the panel's stable frame — wrapped transcript lines extend DOWNWARD and
+/// existing lines never shift up. The full transcript is preserved in a
+/// bounded scroll region (never truncated, never re-anchored); the live
+/// tail stays visible (auto-scrolled to the end on each update).
 struct VoiceOverlayPillView: View {
     var state: VoiceOverlayController.State
     /// Live Glass-slider value for the bar background (0…1).
     var glassIntensity: Double
+    /// The user's configured shortcut (key badge + release hint).
+    var shortcut: HoldToTalkShortcutKind = .fn
     /// Overlay panel hosting: fill the panel's stable frame, top-leading
-    /// anchored. The Appearance preview keeps the pill's intrinsic size.
+    /// anchored. The Appearance preview keeps the bar's intrinsic size.
     var fillsFrame: Bool = false
+    /// Set by `hide()` for the 140 ms dismiss — the surface animates Y
+    /// 0 → −8 + fade (opacity only under Reduce Motion).
+    var dismissing: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
-    private var sage: Color { Color(red: 0.45, green: 0.62, blue: 0.52) }
-    /// Fixed light content on the always-charcoal-tinted bar — legible at
-    /// every glass setting, in both appearances (the tint never drops
-    /// below `VoiceBarGlassPolicy.minTintAlpha`).
-    private var primaryText: Color { Color.white.opacity(0.96) }
-    private var secondaryText: Color { Color.white.opacity(0.68) }
+    /// Entry animation anchor: the surface rises Y −12 → 0 + fade in.
+    @State private var entered = false
+
+    private var barWidth: CGFloat { QuietDesign.Voice.Metric.listeningWidth }
+    private var compactHeight: CGFloat { QuietDesign.Voice.Metric.listeningHeight }
+    private var twoLineHeight: CGFloat { QuietDesign.Voice.Metric.transcriptTwoLineHeight }
+    private var threeLineHeight: CGFloat { QuietDesign.Voice.Metric.transcriptThreeLineHeight }
+
+    #if DEBUG
+    /// DEBUG-only QA override (2026-11-12): lets the labelled QA host dump
+    /// specific listening fixtures without touching the AppDelegate. Never
+    /// compiled into Release; the AppDelegate already labels these shots.
+    private var qaPillTextOverride: String? {
+        ProcessInfo.processInfo.environment["QC_QA_PILL_TEXT"]
+    }
+    private var qaPillAmplitudeOverride: Double? {
+        ProcessInfo.processInfo.environment["QC_QA_PILL_AMPLITUDE"].flatMap(Double.init)
+    }
+    private var effectiveState: VoiceOverlayController.State {
+        guard case .listening(let preview, let amplitude) = state else { return state }
+        let overriddenPreview = qaPillTextOverride.map { LiveVoicePreview(text: $0) } ?? preview
+        let overriddenAmplitude = qaPillAmplitudeOverride ?? amplitude
+        return .listening(preview: overriddenPreview, amplitude: overriddenAmplitude)
+    }
+    #else
+    private var effectiveState: VoiceOverlayController.State { state }
+    #endif
 
     var body: some View {
-        pillContent
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(minWidth: 260, alignment: .leading)
+        content
+            .padding(.horizontal, QuietDesign.Voice.Metric.barHorizontalPadding)
+            .padding(.vertical, 12)
+            .frame(width: barWidth, alignment: .topLeading)
             .frame(when: fillsFrame, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(VoiceBarSurface(intensity: glassIntensity, cornerRadius: 20))
+            .background(VoiceBarSurface(intensity: glassIntensity, cornerRadius: QuietDesign.Voice.Metric.barCorner))
+            .offset(y: dismissing && !reduceMotion ? -8 : (entered || reduceMotion ? 0 : -12))
+            .opacity(dismissing ? 0 : (entered || reduceMotion ? 1 : 0))
+            .animation(reduceMotion ? .easeOut(duration: QuietDesign.Voice.Motion.fade) : .easeOut(duration: QuietDesign.Voice.Motion.entry), value: entered)
+            .animation(reduceMotion ? .easeOut(duration: QuietDesign.Voice.Motion.fade) : .easeOut(duration: QuietDesign.Voice.Motion.dismiss), value: dismissing)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
+            .onAppear {
+                guard !entered else { return }
+                if reduceMotion {
+                    entered = true
+                } else {
+                    withAnimation(.easeOut(duration: QuietDesign.Voice.Motion.entry)) {
+                        entered = true
+                    }
+                }
+            }
     }
 
     @ViewBuilder
-    private var pillContent: some View {
-        HStack(alignment: .top, spacing: 8) {
-            switch state {
-            case .listening(let preview, let amplitude):
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 5)
-                    .accessibilityHidden(true)
-                waveformDot(amplitude: amplitude)
-                if let preview, !preview.text.isEmpty {
-                    // GENUINE captured-so-far words (non-authoritative
-                    // preview — the final transcript still comes from the
-                    // full release transcription). Wraps DOWNWARD inside
-                    // the stable width; bounded to 3 lines with the TAIL
-                    // (latest words) kept visible.
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(preview.text)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(primaryText)
-                            .lineLimit(3)
-                            .truncationMode(.head)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Release to finish")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(secondaryText)
-                    }
-                } else {
-                    Text("Listening…")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(primaryText)
-                    Spacer(minLength: 0)
-                    Text("Release to finish")
-                        .font(.system(size: 11))
-                        .foregroundStyle(secondaryText)
+    private var content: some View {
+        switch effectiveState {
+        case .listening(let preview, let amplitude):
+            listeningContent(preview: preview, amplitude: amplitude)
+        case .processing(let phase):
+            processingContent(phase: phase)
+        case .blocked(let reason):
+            blockedContent(reason: reason)
+        }
+    }
+
+    // MARK: Listening (the approved hold-to-talk surface)
+
+    @ViewBuilder
+    private func listeningContent(preview: LiveVoicePreview?, amplitude: Double) -> some View {
+        let transcript = preview?.text ?? ""
+        let hasTranscript = !transcript.isEmpty
+        VStack(alignment: .leading, spacing: hasTranscript ? 8 : 0) {
+            HStack(alignment: .center, spacing: 12) {
+                // Live mic — recording indicator, never a static icon.
+                ZStack {
+                    Circle()
+                        .fill(QuietDesign.Voice.VoiceColor.micLiveTint(colorScheme))
+                        .frame(width: QuietDesign.Voice.Metric.micCircle,
+                               height: QuietDesign.Voice.Metric.micCircle)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Voice.VoiceColor.micLiveGlyph(colorScheme))
                 }
-            case .processing(let phase):
-                ProgressView()
-                    .controlSize(.small)
-                Text(phase.label)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(primaryText)
-                Spacer(minLength: 0)
-            case .blocked(let reason):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(reason)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Listening…")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                    if !hasTranscript {
+                        Text(QuietVoiceShortcutGlyph.releaseHint(shortcut))
+                            .font(.system(size: 11))
+                            .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                    }
+                }
+                Spacer(minLength: 8)
+                QuietVoiceEqualizer(
+                    amplitude: amplitude,
+                    tint: QuietDesign.Voice.VoiceColor.waveCrest(colorScheme),
+                    reduceMotion: reduceMotion
+                )
+                QuietVoiceKeyBadge(label: QuietVoiceShortcutGlyph.badge(shortcut))
+            }
+            .frame(height: 32, alignment: .center)
+
+            if hasTranscript {
+                // The genuine captured-so-far words. Bounded to a scroll
+                // region sized for the current growth step; the FULL text
+                // is preserved (nothing truncated) and the tail stays
+                // visible — auto-scrolled to the end on every live update.
+                let lineCount = estimatedLines(transcript)
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        Text(transcript)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 2)
+                            .id("transcriptBottom")
+                    }
+                    .scrollIndicators(.never)
+                    .frame(height: lineCount <= 2 ? 52 : 72)
+                    .onChange(of: transcript) { _, _ in
+                        proxy.scrollTo("transcriptBottom", anchor: .bottom)
+                    }
+                    .onAppear {
+                        proxy.scrollTo("transcriptBottom", anchor: .bottom)
+                    }
+                }
+                HStack {
+                    Spacer(minLength: 8)
+                    Text(QuietVoiceShortcutGlyph.releaseHint(shortcut))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+                }
+                .frame(height: 14)
             }
         }
     }
 
-    /// REAL amplitude waveform in a FIXED frame: the glyph's opacity (and,
-    /// only when Reduce Motion is off, a layout-neutral inner scale)
-    /// follows the actual microphone RMS published ~20 Hz by SpeechCapture.
-    /// The frame NEVER changes size with the level — that per-tick height
-    /// change is what made the old bar's text bob vertically while talking.
+    private func estimatedLines(_ text: String) -> Int {
+        let charsPerLine = 52
+        var lines = 0
+        for paragraph in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            lines += max(1, Int(ceil(Double(paragraph.count) / Double(charsPerLine))))
+        }
+        return max(1, lines)
+    }
+
+    // MARK: Processing (honest preparation — mic immediately off)
+
     @ViewBuilder
-    private func waveformDot(amplitude: Double) -> some View {
-        let level = min(1, max(0, amplitude))
-        Image(systemName: "waveform")
-            .font(.system(size: 14, weight: .medium))
-            .frame(width: 22, height: 22)
-            .foregroundStyle(sage.opacity(0.55 + level * 0.45))
-            .animation(nil, value: level)
+    private func processingContent(phase: HoldProcessingPhase) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(QuietDesign.Voice.VoiceColor.preparingSage(colorScheme))
+                .accessibilityHidden(true)
+            Text("Preparing your event…")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+            Spacer(minLength: 8)
+            Text("Mic off")
+                .font(.system(size: 11))
+                .foregroundStyle(QuietDesign.Color.labelSecondary(colorScheme))
+        }
+        .frame(height: 32, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(phase.label.replacingOccurrences(of: "…", with: "") + ". Preparing your event.")
+    }
+
+    // MARK: Blocked (concise, honest, auto-dismisses)
+
+    @ViewBuilder
+    private func blockedContent(reason: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(QuietDesign.Voice.VoiceColor.micLiveTint(colorScheme))
+                    .frame(width: QuietDesign.Voice.Metric.micCircle,
+                           height: QuietDesign.Voice.Metric.micCircle)
+                Image(systemName: "mic.slash.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(QuietDesign.Voice.VoiceColor.micLiveGlyph(colorScheme))
+            }
             .accessibilityHidden(true)
+            Text(reason)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(QuietDesign.Color.labelPrimary(colorScheme))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+        }
+        .frame(height: 32, alignment: .center)
     }
 
     private var accessibilityText: String {
-        switch state {
+        switch effectiveState {
         case .listening(let preview, _):
             if let preview, !preview.text.isEmpty {
                 return "Listening. So far: \(preview.text). Release to finish."
             }
-            return "Listening. Release to finish."
+            return "Listening. \(QuietVoiceShortcutGlyph.releaseHint(shortcut))."
         case .processing(let phase):
-            return "\(phase.label.replacingOccurrences(of: "…", with: "")) your recording."
+            return phase.label.replacingOccurrences(of: "…", with: "") + ". Preparing your event."
         case .blocked(let reason):
             return reason
         }
