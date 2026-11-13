@@ -37,6 +37,16 @@ if [[ -z "${CLIENT_ID//[[:space:]]/}" ]]; then
 fi
 echo "==> Client ID configured: ${CLIENT_ID:0:12}…${CLIENT_ID: -10} (public Desktop client, no secret)"
 
+# App icon: derived from the committed master artwork (Resources/AppIcon/
+# quikcal-app-icon.png) so every normal build ships the same logo.
+"$ROOT/scripts/build_icon.sh"
+cp "$ROOT/build/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+if [[ ! -f "$APP/Contents/Resources/AppIcon.icns" ]]; then
+  echo "Refusing to package: app icon (AppIcon.icns) missing from the bundle" >&2
+  exit 1
+fi
+echo "==> Bundled AppIcon.icns (Info.plist CFBundleIconFile=AppIcon)"
+
 # Bundled speech helper (statically linked Metal runtime — no extra dylibs required).
 cp "$HELPER_SRC" "$APP/Contents/Resources/SpeechRuntime/QuietCalendarTranscribe"
 chmod 755 "$APP/Contents/Resources/SpeechRuntime/QuietCalendarTranscribe"

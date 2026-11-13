@@ -6,6 +6,12 @@
 	<string>QuikCal</string>
 	<key>CFBundleExecutable</key>
 	<string>QuietCalendar</string>
+	<!-- App icon: Resources/AppIcon/quikcal-app-icon.png is the committed
+	     master artwork; scripts/build_icon.sh derives Contents/Resources/
+	     AppIcon.icns from it on every normal build (no Finder custom-icon
+	     metadata involved). -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.quietcalendar.app</string>
 	<key>CFBundleName</key>
